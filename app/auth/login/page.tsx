@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Landmark } from 'lucide-react'
+import { AppLogo } from '@/components/AppLogo'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -11,7 +12,9 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+  const wasReset = searchParams.get('reset') === '1'
 
   
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -35,15 +38,19 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center">
           <div className="flex items-center gap-2">
-            <Landmark className="h-8 w-8 text-blue-600" />
-            <span className="text-2xl font-bold text-gray-900">CanAccounts</span>
+            <AppLogo size={32} />
+            <span className="text-2xl font-bold text-gray-900">Ready</span>
           </div>
-          <p className="mt-2 text-sm text-gray-500">Canadian personal &amp; business accounting</p>
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
           <h1 className="mb-6 text-lg font-semibold text-gray-900">Sign in to your account</h1>
 
+          {wasReset && (
+            <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              Password updated. You can now sign in with your new password.
+            </div>
+          )}
           {error && (
             <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
@@ -64,14 +71,19 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700">Password</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-gray-700">Password</label>
+                <Link href="/auth/forgot-password" className="text-xs text-blue-600 hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 type="password"
                 required
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 placeholder="••••••••"
               />
             </div>

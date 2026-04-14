@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { Landmark } from 'lucide-react'
+import { AppLogo } from '@/components/AppLogo'
 
 export default function SignupPage() {
   const searchParams = useSearchParams()
@@ -68,8 +68,8 @@ export default function SignupPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center">
           <div className="flex items-center gap-2">
-            <Landmark className="h-8 w-8 text-blue-600" />
-            <span className="text-2xl font-bold text-gray-900">CanAccounts</span>
+            <AppLogo size={32} />
+            <span className="text-2xl font-bold text-gray-900">Ready</span>
           </div>
         </div>
 

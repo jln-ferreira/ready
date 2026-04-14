@@ -5,10 +5,11 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
-  ArrowLeftRight, BarChart2, FileText, Home, LogOut, Landmark,
+  ArrowLeftRight, BarChart2, FileText, Home, LogOut,
   Users, X, ShoppingCart, ListChecks, Utensils, StickyNote,
   Target, Droplets, User, ChevronDown, Dumbbell,
 } from 'lucide-react'
+import { AppLogo } from './AppLogo'
 
 interface NavItem {
   href: string
@@ -92,11 +93,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
       {/* Logo + mobile close */}
       <div className="mb-6 flex items-center justify-between px-2 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <Landmark className="h-6 w-6 text-blue-600" />
-          <span
-            className="text-lg font-bold tracking-tight text-gray-900"
-            style={{ fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif", letterSpacing: '-0.02em' }}
-          >
+          <AppLogo size={28} />
+          <span className="text-lg font-bold tracking-tight text-gray-900" style={{ letterSpacing: '-0.02em' }}>
             Ready
           </span>
         </div>

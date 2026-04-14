@@ -32,6 +32,28 @@ function calcWaterGoal(profile: Partial<Profile>): number {
   return Math.min(4000, Math.max(1500, Math.round((weight * 35 * mult) / 100) * 100))
 }
 
+const TDEE_MULTIPLIERS: Record<ActivityLevel, number> = {
+  sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725,
+}
+
+interface TDEEResult {
+  bmr:  number | null
+  tdee: number | null
+}
+
+function calcTDEE(profile: Partial<Profile>): TDEEResult {
+  const { weight_kg, height_cm, age, sex, activity_level } = profile
+  if (!weight_kg || !height_cm || !age || !sex || sex === 'other') {
+    return { bmr: null, tdee: null }
+  }
+  // Mifflin-St Jeor
+  const bmr = sex === 'male'
+    ? (10 * weight_kg) + (6.25 * height_cm) - (5 * age) + 5
+    : (10 * weight_kg) + (6.25 * height_cm) - (5 * age) - 161
+  const mult = TDEE_MULTIPLIERS[activity_level ?? 'moderate']
+  return { bmr: Math.round(bmr), tdee: Math.round(bmr * mult) }
+}
+
 const blank: Profile = { weight_kg: null, height_cm: null, age: null, sex: null, activity_level: 'moderate' }
 
 export default function FitnessProfilePage() {
@@ -78,6 +100,7 @@ export default function FitnessProfilePage() {
   if (loading) return <Spinner />
 
   const waterGoal = calcWaterGoal(profile)
+  const { bmr, tdee } = calcTDEE(profile)
 
   return (
     <div className="max-w-lg mx-auto px-4 md:px-6 py-8 space-y-6">
@@ -197,6 +220,30 @@ export default function FitnessProfilePage() {
           {(waterGoal / 250).toFixed(0)} glasses of 250ml
           {profile.weight_kg ? ` · based on ${profile.weight_kg}kg · ${ACTIVITY_LABELS[profile.activity_level].label.toLowerCase()} activity` : ' · update your weight for a precise goal'}
         </p>
+      </div>
+
+      {/* Calorie card */}
+      <div className="rounded-2xl bg-orange-50 border border-orange-100 px-4 py-4">
+        <p className="text-xs font-semibold text-orange-500 uppercase tracking-wide mb-1">
+          Average daily calories burned (TDEE)
+        </p>
+        {tdee ? (
+          <>
+            <p className="text-2xl font-bold text-orange-700">{tdee.toLocaleString()} kcal</p>
+            <p className="text-xs text-orange-400 mt-0.5">
+              BMR at rest: {bmr?.toLocaleString()} kcal · {ACTIVITY_LABELS[profile.activity_level].label.toLowerCase()} activity multiplier ×{TDEE_MULTIPLIERS[profile.activity_level]}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-2xl font-bold text-orange-300">— kcal</p>
+            <p className="text-xs text-orange-400 mt-0.5">
+              {profile.sex === 'other'
+                ? 'TDEE calculation uses biological sex — select male or female for a precise estimate'
+                : 'Fill in weight, height, age, and sex for a precise estimate'}
+            </p>
+          </>
+        )}
       </div>
 
       {/* Save */}

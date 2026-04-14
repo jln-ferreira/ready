@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Menu, Landmark } from 'lucide-react'
+import { Menu } from 'lucide-react'
 import Sidebar from './Sidebar'
+import { AppLogo } from './AppLogo'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -38,8 +39,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex items-center gap-2">
-            <Landmark className="h-5 w-5 text-blue-600" />
-            <span className="font-bold text-gray-900">CanAccounts</span>
+            <AppLogo size={22} />
+            <span className="font-bold text-gray-900">Ready</span>
           </div>
         </header>
 
