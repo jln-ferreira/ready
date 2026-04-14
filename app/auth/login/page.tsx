@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Landmark } from 'lucide-react'
 
@@ -15,7 +14,7 @@ export default function LoginPage() {
   const supabase = createClient()
 
   
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError(null)
     setLoading(true)
@@ -25,7 +24,7 @@ export default function LoginPage() {
     if (err) {
       setError(err.message)
     } else {
-      router.push('/reports')
+      router.push('/home')
       router.refresh()
     }
     setLoading(false)
@@ -85,12 +84,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-4 text-center text-xs text-gray-500">
-            Don&apos;t have an account?{' '}
-            <Link href="/auth/signup" className="font-medium text-blue-600 hover:underline">
-              Sign up
-            </Link>
-          </p>
         </div>
       </div>
     </div>

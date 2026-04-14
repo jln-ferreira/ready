@@ -11,6 +11,8 @@ interface TransactionTableProps {
   onDelete?: (id: string) => Promise<{ error: string | null }>
   sortBy?: SortKey
   onSort?: (key: SortKey) => void
+  /** If provided, edit/delete actions are only shown for transactions owned by this user */
+  currentUserId?: string
 }
 
 type SortField = 'date' | 'category' | 'type' | 'amount'
@@ -27,8 +29,10 @@ function SortIcon({ field, sortBy }: { field: SortField; sortBy?: SortKey }) {
 }
 
 export default function TransactionTable({
-  transactions, onEdit, onDelete, sortBy, onSort,
+  transactions, onEdit, onDelete, sortBy, onSort, currentUserId,
 }: TransactionTableProps) {
+  const canAct = (tx: Transaction) =>
+    !currentUserId || tx.user_id === currentUserId
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -114,7 +118,7 @@ export default function TransactionTable({
               )}
             </div>
 
-            {(onEdit || onDelete) && (
+            {(onEdit || onDelete) && canAct(tx) && (
               <div className="mt-2 flex justify-end gap-3">
                 {onEdit && (
                   <button
@@ -241,7 +245,7 @@ export default function TransactionTable({
 
                 <td className="px-3 py-3">
                   <div className="flex items-center justify-end gap-2">
-                    {onEdit && (
+                    {onEdit && canAct(tx) && (
                       <button
                         onClick={(e) => { e.stopPropagation(); onEdit(tx) }}
                         className="text-gray-300 transition-colors hover:text-blue-500"
@@ -250,7 +254,7 @@ export default function TransactionTable({
                         <Pencil className="h-4 w-4" />
                       </button>
                     )}
-                    {onDelete && (
+                    {onDelete && canAct(tx) && (
                       <button
                         onClick={(e) => handleDelete(e, tx.id)}
                         disabled={deletingId === tx.id}

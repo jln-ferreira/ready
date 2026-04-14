@@ -8,6 +8,7 @@ export type DividendType = 'eligible' | 'non_eligible'
 export interface Household {
   id: string
   name: string
+  calendar_token: string
   created_at: string
 }
 
