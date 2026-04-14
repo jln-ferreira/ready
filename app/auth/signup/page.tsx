@@ -30,6 +30,7 @@ export default function SignupPage() {
       email,
       password,
       options: {
+        emailRedirectTo: `${window.location.origin}/auth/confirm`,
         data: isJoining
           ? { invite_code: inviteCode.toUpperCase() }
           : { household_name: householdName || 'My Household' },
