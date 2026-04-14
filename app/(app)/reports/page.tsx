@@ -7,6 +7,7 @@ import { useTransactions } from '@/hooks/useTransactions'
 import StatCard from '@/components/StatCard'
 import TransactionTable from '@/components/TransactionTable'
 import EditTransactionModal from '@/components/EditTransactionModal'
+import SpendingChart from '@/components/SpendingChart'
 import { getCurrentTaxYear } from '@/utils/format'
 import { BarChart2, TrendingUp, TrendingDown, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import type { AccountType, Transaction, TransactionFormData } from '@/types'
@@ -46,11 +47,19 @@ export default function ReportsPage() {
   const [editingTx, setEditingTx]         = useState<Transaction | null>(null)
 
   const { household, accounts, categories, loading: hhLoading } = useHousehold()
-  const { transactions, loading, updateTransaction, deleteTransaction } = useTransactions({
+  // Always load the full year — month filtering happens in-memory for the chart to always have full data
+  const { transactions: allTransactions, loading, updateTransaction, deleteTransaction } = useTransactions({
     householdId: household?.id,
     year,
-    month: month === 0 ? undefined : month,
   })
+
+  // Filter transactions by selected month (in-memory)
+  const transactions = useMemo(
+    () => month === 0
+      ? allTransactions
+      : allTransactions.filter(tx => tx.date.startsWith(`${year}-${String(month).padStart(2, '0')}`)),
+    [allTransactions, month, year]
+  )
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setCurrentUserId(user?.id))
@@ -246,6 +255,26 @@ export default function ReportsPage() {
               </div>
             </div>
 
+            {/* Family spending chart */}
+            {household && (
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                  <BarChart2 className="h-4 w-4 text-gray-400" />
+                  <h2 className="text-sm font-semibold text-gray-700">Family Spending vs Goal — {year}</h2>
+                </div>
+                <SpendingChart
+                  year={year}
+                  scope="family"
+                  transactions={allTransactions}
+                  accounts={accounts}
+                  householdId={household.id}
+                  userId={currentUserId}
+                  color="#7c3aed"
+                  label="Family"
+                />
+              </div>
+            )}
+
             {/* Transaction list */}
             <TransactionTable
               transactions={familyTx}
@@ -290,6 +319,28 @@ export default function ReportsPage() {
               </div>
             </div>
           </div>
+
+          {/* ── Spending vs Goal chart ── */}
+          {household && (
+            <div className="mb-8 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart2 className="h-4 w-4 text-gray-400" />
+                <h2 className="text-sm font-semibold text-gray-700">
+                  {tab === 'personal' ? 'Personal' : 'Business'} Spending vs Goal — {year}
+                </h2>
+              </div>
+              <SpendingChart
+                year={year}
+                scope={tab as 'personal' | 'business'}
+                transactions={allTransactions}
+                accounts={accounts}
+                householdId={household.id}
+                userId={currentUserId}
+                color={tab === 'business' ? '#059669' : '#2563eb'}
+                label={tab === 'personal' ? 'Personal' : 'Business'}
+              />
+            </div>
+          )}
 
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Income by category */}
