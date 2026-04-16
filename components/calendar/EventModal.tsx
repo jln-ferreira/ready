@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
-import { X, MapPin, Clock, RotateCcw, Pencil, Trash2, AlertCircle } from 'lucide-react'
-import type { CalendarEvent, EventInput } from '@/types/calendar'
-import { CATEGORIES, CATEGORY_COLORS } from '@/types/calendar'
+import { X, MapPin, Clock, RotateCcw, Pencil, Trash2, AlertCircle, Bell } from 'lucide-react'
+import type { CalendarEvent, EventInput, EventReminder } from '@/types/calendar'
+import { CATEGORIES, CATEGORY_COLORS, REMINDER_LABELS } from '@/types/calendar'
 
 type ModalMode = 'view' | 'edit' | 'add'
 
@@ -28,6 +28,7 @@ const blankForm = (date?: Date): EventInput => {
     location: null,
     category: 'Personal',
     recurrence: 'none',
+    reminder: 'none',
   }
 }
 
@@ -40,6 +41,7 @@ const eventToForm = (event: CalendarEvent): EventInput => ({
   location: event.location,
   category: event.category,
   recurrence: event.recurrence,
+  reminder: event.reminder ?? 'none',
 })
 
 export function EventModal({ mode: initialMode, event, defaultDate, onClose, onSave, onDelete }: Props) {
@@ -156,6 +158,13 @@ export function EventModal({ mode: initialMode, event, defaultDate, onClose, onS
               <div className="flex items-start gap-3 text-sm text-gray-700">
                 <RotateCcw className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
                 <p className="capitalize">Repeats {event.recurrence}</p>
+              </div>
+            )}
+
+            {event.reminder && event.reminder !== 'none' && (
+              <div className="flex items-start gap-3 text-sm text-gray-700">
+                <Bell className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
+                <p>Reminder: {REMINDER_LABELS[event.reminder]}</p>
               </div>
             )}
 
@@ -306,6 +315,20 @@ export function EventModal({ mode: initialMode, event, defaultDate, onClose, onS
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Reminder</label>
+              <select
+                value={form.reminder}
+                onChange={e => set('reminder', e.target.value as EventReminder)}
+                className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="none">None</option>
+                <option value="at_time">At time of event</option>
+                <option value="1_day_before">1 day before</option>
+                <option value="2_days_before">2 days before</option>
               </select>
             </div>
 

@@ -79,7 +79,10 @@ export default function ChoresPage() {
     if (existingLog) {
       // Undo
       const { error } = await supabase.from('chore_logs').delete().eq('id', existingLog.id)
-      if (!error) setLogs(prev => prev.filter(l => l.id !== existingLog.id))
+      if (!error) {
+        setLogs(prev => prev.filter(l => l.id !== existingLog.id))
+        window.dispatchEvent(new Event('chore-toggled'))
+      }
     } else {
       // Mark done — upsert to handle race conditions
       if (!currentUserId) return
@@ -90,7 +93,10 @@ export default function ChoresPage() {
           { onConflict: 'chore_id,done_date' }
         )
         .select().single()
-      if (!error && data) setLogs(prev => [...prev.filter(l => l.chore_id !== chore.id), data as ChoreLog])
+      if (!error && data) {
+        setLogs(prev => [...prev.filter(l => l.chore_id !== chore.id), data as ChoreLog])
+        window.dispatchEvent(new Event('chore-toggled'))
+      }
     }
   }
 

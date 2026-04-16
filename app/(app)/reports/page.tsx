@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
+import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 import { useTransactions } from '@/hooks/useTransactions'
 import StatCard from '@/components/StatCard'
 import TransactionTable from '@/components/TransactionTable'
@@ -35,8 +36,12 @@ const TAB_STYLES: Record<Tab, string> = {
 export default function ReportsPage() {
   const supabase = createClient()
   const now = new Date()
+  const { accountType, activeMemberId, activeMember, effectiveUserId } = useActiveMembers()
 
-  const [tab, setTab]               = useState<Tab>('family')
+  // Family account with no member selected: locked to family tab
+  const lockedToFamily = accountType === 'family' && !activeMemberId
+
+  const [tab, setTab] = useState<Tab>('family')
   const [year, setYear]             = useState(getCurrentTaxYear())
   const [month, setMonth]           = useState(0)          // 0 = all months
   const [barSortField, setBarSortField] = useState<BarSortField>('amount')
@@ -45,6 +50,9 @@ export default function ReportsPage() {
   // Family-tab state
   const [currentUserId, setCurrentUserId] = useState<string | undefined>()
   const [editingTx, setEditingTx]         = useState<Transaction | null>(null)
+
+  // Lock to family tab when family account with no active member
+  useEffect(() => { if (lockedToFamily) setTab('family') }, [lockedToFamily])
 
   const { household, accounts, categories, loading: hhLoading } = useHousehold()
   // Always load the full year — month filtering happens in-memory for the chart to always have full data
@@ -65,21 +73,30 @@ export default function ReportsPage() {
     supabase.auth.getUser().then(({ data: { user } }) => setCurrentUserId(user?.id))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Family tab: personal accounts only ──
+  // The user whose personal/business data we show
+  // – family + member selected → that member's ID
+  // – individual account        → own ID
+  const filterUserId = effectiveUserId ?? currentUserId
+
+  // ── Family tab: all personal-account transactions across the whole household ──
   const familyTx = useMemo(
     () => transactions.filter(tx => !tx.account || tx.account.type === 'personal'),
     [transactions]
   )
 
-  // ── Personal / Business tabs ──
+  // ── Personal / Business tabs: scoped to filterUserId ──
   const tabAccountIds = useMemo(
     () => new Set(accounts.filter(a => a.type === (tab as AccountType)).map(a => a.id)),
     [accounts, tab]
   )
-  const tabTransactions = useMemo(
-    () => transactions.filter(tx => tx.account_id && tabAccountIds.has(tx.account_id)),
-    [transactions, tabAccountIds]
-  )
+  const tabTransactions = useMemo(() => {
+    const byAccount = transactions.filter(tx => tx.account_id && tabAccountIds.has(tx.account_id))
+    // Personal / business tabs must only show the active user's transactions
+    if (tab !== 'family' && filterUserId) {
+      return byAccount.filter(tx => tx.user_id === filterUserId)
+    }
+    return byAccount
+  }, [transactions, tabAccountIds, tab, filterUserId])
 
   const visibleTransactions = month === 0
     ? tabTransactions
@@ -164,7 +181,9 @@ export default function ReportsPage() {
       {/* ── Header ── */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {activeMember ? `${activeMember.display_name || activeMember.email.split('@')[0]}'s Reports` : 'Reports'}
+          </h1>
           <p className="mt-1 text-sm text-gray-500">Financial overview — {periodLabel}</p>
         </div>
         <select
@@ -176,19 +195,21 @@ export default function ReportsPage() {
         </select>
       </div>
 
-      {/* ── Tabs ── */}
+      {/* ── Tabs ── hidden tabs when family account with no active member */}
       <div className="mb-4 flex border-b border-gray-200">
-        {(['family', 'personal', 'business'] as Tab[]).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`mr-6 border-b-2 pb-3 text-sm capitalize transition-colors ${
-              tab === t ? TAB_STYLES[t] : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-            }`}
-          >
-            {t === 'family' ? 'Family Costs' : t}
-          </button>
-        ))}
+        {(['family', 'personal', 'business'] as Tab[])
+          .filter(t => !lockedToFamily || t === 'family')
+          .map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`mr-6 border-b-2 pb-3 text-sm capitalize transition-colors ${
+                tab === t ? TAB_STYLES[t] : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+              }`}
+            >
+              {t === 'family' ? 'Family Costs' : t}
+            </button>
+          ))}
       </div>
 
       {/* ── Month pills (all tabs) ── */}
@@ -268,7 +289,7 @@ export default function ReportsPage() {
                   transactions={allTransactions}
                   accounts={accounts}
                   householdId={household.id}
-                  userId={currentUserId}
+                  userId={filterUserId}
                   color="#7c3aed"
                   label="Family"
                 />
@@ -332,10 +353,10 @@ export default function ReportsPage() {
               <SpendingChart
                 year={year}
                 scope={tab as 'personal' | 'business'}
-                transactions={allTransactions}
+                transactions={allTransactions.filter(tx => !filterUserId || tx.user_id === filterUserId)}
                 accounts={accounts}
                 householdId={household.id}
-                userId={currentUserId}
+                userId={filterUserId}
                 color={tab === 'business' ? '#059669' : '#2563eb'}
                 label={tab === 'personal' ? 'Personal' : 'Business'}
               />

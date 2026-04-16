@@ -41,7 +41,7 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  const publicPaths = ['/auth/login', '/auth/signup', '/auth/callback']
+  const publicPaths = ['/auth/login', '/auth/signup', '/auth/callback', '/api/']
   const isPublicPath = publicPaths.some((p) => pathname.startsWith(p))
 
   if (!user && !isPublicPath) {

@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
 import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
-import { StickyNote, Pin, PinOff, Trash2, Send } from 'lucide-react'
+import { useActiveMembers } from '@/contexts/ActiveMemberContext'
+import { StickyNote, Pin, PinOff, Trash2, Send, Users } from 'lucide-react'
+import { markNoticeboardSeen } from '@/hooks/useSidebarBadges'
 
 interface Notice {
   id: string
@@ -18,9 +20,9 @@ interface Notice {
 interface Member {
   user_id: string
   email: string
+  display_name: string
 }
 
-// Stable pastel color from user id (for avatar circles)
 function avatarColor(userId: string): string {
   const colors = [
     'bg-blue-100 text-blue-700',
@@ -36,14 +38,19 @@ function avatarColor(userId: string): string {
 
 export default function NoticeboardPage() {
   const { household, loading: householdLoading } = useHousehold()
+  const { accountType, activeMemberId, activeMember } = useActiveMembers()
   const supabase = createClient()
 
-  const [notices, setNotices]   = useState<Notice[]>([])
-  const [members, setMembers]   = useState<Member[]>([])
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [loading, setLoading]   = useState(true)
-  const [content, setContent]   = useState('')
-  const [posting, setPosting]   = useState(false)
+  const [notices, setNotices]         = useState<Notice[]>([])
+  const [members, setMembers]         = useState<Member[]>([])
+  const [currentUserId, setCurrentUserId]   = useState<string | null>(null)
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>('')
+  const [loading, setLoading]         = useState(true)
+  const [content, setContent]         = useState('')
+  const [posting, setPosting]         = useState(false)
+
+  // Mark all notices as seen whenever this page is visited
+  useEffect(() => { markNoticeboardSeen() }, [])
 
   useEffect(() => {
     if (!household) return
@@ -54,6 +61,7 @@ export default function NoticeboardPage() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     setCurrentUserId(user?.id ?? null)
+    setCurrentUserEmail(user?.email ?? '')
 
     const [noticeRes, memberRes] = await Promise.all([
       supabase
@@ -62,7 +70,7 @@ export default function NoticeboardPage() {
         .eq('household_id', household!.id)
         .order('pinned', { ascending: false })
         .order('created_at', { ascending: false }),
-      supabase.rpc('get_household_members'),
+      supabase.rpc('get_household_members_with_profiles'),
     ])
 
     setNotices((noticeRes.data as Notice[]) ?? [])
@@ -74,10 +82,14 @@ export default function NoticeboardPage() {
     if (!content.trim() || !household) return
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
+
+    // Family account posts as the active member so the notice is attributed correctly
+    const postedBy = (accountType === 'family' && activeMemberId) ? activeMemberId : user.id
+
     setPosting(true)
     const { data, error } = await supabase
       .from('notices')
-      .insert({ household_id: household.id, created_by: user.id, content: content.trim() })
+      .insert({ household_id: household.id, created_by: postedBy, content: content.trim() })
       .select().single()
     if (!error && data) {
       setNotices(prev => [data as Notice, ...prev])
@@ -107,17 +119,29 @@ export default function NoticeboardPage() {
     if (!error) setNotices(prev => prev.filter(n => n.id !== id))
   }
 
-  function memberInitial(userId: string): string {
+  /** Resolve a poster's display name. Checks current user first so family
+   *  accounts (not in the members list) always show 'You' when it's them. */
+  function memberName(userId: string): string {
+    if (userId === currentUserId) return 'You'
     const m = members.find(m => m.user_id === userId)
-    if (!m) return '?'
-    return m.email[0].toUpperCase()
+    if (m) return m.display_name?.trim() || m.email.split('@')[0]
+    return 'Family'
   }
 
-  function memberName(userId: string): string {
+  function memberInitial(userId: string): string {
+    if (userId === currentUserId) return currentUserEmail[0]?.toUpperCase() ?? 'F'
     const m = members.find(m => m.user_id === userId)
-    if (!m) return 'Someone'
-    return userId === currentUserId ? 'You' : m.email.split('@')[0]
+    if (m) return (m.display_name?.trim() || m.email)[0].toUpperCase()
+    return 'F'
   }
+
+  // Family account with no member selected → view-only
+  const canPost = accountType !== 'family' || !!activeMemberId
+
+  // Label shown in the post box when family account has a member selected
+  const postingAs = activeMember
+    ? (activeMember.display_name?.trim() || activeMember.email.split('@')[0])
+    : null
 
   if (householdLoading) return <Spinner />
 
@@ -130,25 +154,39 @@ export default function NoticeboardPage() {
         <h1 className="text-xl font-semibold text-gray-900">Noticeboard</h1>
       </div>
 
-      {/* Post a note */}
-      <div className="mb-6 flex gap-2">
-        <textarea
-          placeholder="Post a note for the family…"
-          value={content}
-          onChange={e => setContent(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); postNotice() } }}
-          rows={2}
-          className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 resize-none"
-        />
-        <button
-          onClick={postNotice}
-          disabled={!content.trim() || posting}
-          className="flex-shrink-0 self-end flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
-        >
-          <Send className="h-4 w-4" />
-          Post
-        </button>
-      </div>
+      {/* Post a note — hidden for family account with no member selected */}
+      {canPost ? (
+        <div className="mb-6 space-y-1.5">
+          {postingAs && (
+            <p className="text-xs text-gray-400 px-1">
+              Posting as <span className="font-medium text-gray-600">{postingAs}</span>
+            </p>
+          )}
+          <div className="flex gap-2">
+            <textarea
+              placeholder="Post a note for the family…"
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); postNotice() } }}
+              rows={2}
+              className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 resize-none"
+            />
+            <button
+              onClick={postNotice}
+              disabled={!content.trim() || posting}
+              className="flex-shrink-0 self-end flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <Send className="h-4 w-4" />
+              Post
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 text-sm text-gray-400">
+          <Users className="h-4 w-4 flex-shrink-0" />
+          Select a family member to post a notice.
+        </div>
+      )}
 
       {/* Notices */}
       {loading ? (
@@ -164,9 +202,7 @@ export default function NoticeboardPage() {
             <div
               key={notice.id}
               className={`rounded-2xl border p-4 transition-colors ${
-                notice.pinned
-                  ? 'bg-yellow-50 border-yellow-200'
-                  : 'bg-white border-gray-200'
+                notice.pinned ? 'bg-yellow-50 border-yellow-200' : 'bg-white border-gray-200'
               }`}
             >
               <div className="flex items-start gap-3">

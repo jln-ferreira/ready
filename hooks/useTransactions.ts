@@ -8,6 +8,8 @@ interface UseTransactionsOptions {
   householdId?: string
   year?: number
   month?: number
+  /** When set, only returns transactions owned by this user_id (used for family account member view) */
+  filterUserId?: string
 }
 
 export function useTransactions(options: UseTransactionsOptions = {}) {
@@ -41,6 +43,10 @@ export function useTransactions(options: UseTransactionsOptions = {}) {
         query = query.eq('household_id', options.householdId)
       }
 
+      if (options.filterUserId) {
+        query = query.eq('user_id', options.filterUserId)
+      }
+
       if (options.year) {
         query = query
           .gte('date', `${options.year}-01-01`)
@@ -67,11 +73,13 @@ export function useTransactions(options: UseTransactionsOptions = {}) {
 
   useEffect(() => {
     fetch()
-  }, [fetch])
+  }, [fetch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addTransaction = async (
     form: TransactionFormData,
-    householdId: string
+    householdId: string,
+    /** Override the user_id (used when family account adds a transaction for a member) */
+    overrideUserId?: string
   ): Promise<{ error: string | null }> => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -80,7 +88,7 @@ export function useTransactions(options: UseTransactionsOptions = {}) {
       const { data: tx, error: txErr } = await supabase
         .from('transactions')
         .insert({
-          user_id: user.id,
+          user_id: overrideUserId ?? user.id,
           household_id: householdId,
           account_id: form.account_id || null,
           date: form.date,

@@ -4,9 +4,10 @@ import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useHousehold } from '@/hooks/useHousehold'
 import { useTransactions } from '@/hooks/useTransactions'
+import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 import TransactionTable from '@/components/TransactionTable'
 import { getCurrentTaxYear } from '@/utils/format'
-import { PlusCircle, Search, X } from 'lucide-react'
+import { PlusCircle, Search, X, ArrowLeftRight } from 'lucide-react'
 import type { Transaction, SortKey } from '@/types'
 
 type Tab = 'personal' | 'business'
@@ -20,10 +21,19 @@ export default function TransactionsPage() {
   const [categoryFilter, setCategoryFilter] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('date_desc')
 
+  const { accountType, activeMemberId, activeMember } = useActiveMembers()
   const { household, accounts, categories, loading: hhLoading } = useHousehold()
+
+  // Family account with no member selected: personal transactions are meaningless
+  const lockedToFamily = accountType === 'family' && !activeMemberId
+
+  // When family account has a member selected, filter to that member's transactions
+  const filterUserId = accountType === 'family' ? activeMemberId ?? undefined : undefined
+
   const { transactions, loading, deleteTransaction } = useTransactions({
     householdId: household?.id,
     year,
+    filterUserId,
   })
 
   const personalAccountIds = new Set(
@@ -39,7 +49,6 @@ export default function TransactionsPage() {
     (tx) => tx.account_id && idsForTab(tab).has(tx.account_id)
   )
 
-  // Only show categories that appear in the current tab's transactions
   const tabCategoryIds = useMemo(
     () => new Set(tabTransactions.map((tx) => tx.category_id).filter(Boolean)),
     [tabTransactions]
@@ -56,8 +65,8 @@ export default function TransactionsPage() {
     }
     return [...result].sort((a, b) => {
       switch (sortBy) {
-        case 'date_asc':    return a.date.localeCompare(b.date)
-        case 'date_desc':   return b.date.localeCompare(a.date)
+        case 'date_asc':      return a.date.localeCompare(b.date)
+        case 'date_desc':     return b.date.localeCompare(a.date)
         case 'amount_asc':    return a.amount - b.amount
         case 'amount_desc':   return b.amount - a.amount
         case 'category_asc':  return (a.category?.name ?? '').localeCompare(b.category?.name ?? '')
@@ -70,29 +79,40 @@ export default function TransactionsPage() {
   }, [tabTransactions, typeFilter, categoryFilter, search, sortBy])
 
   const hasActiveFilters = typeFilter !== 'all' || categoryFilter !== '' || search.trim() !== ''
-
-  const clearFilters = () => {
-    setTypeFilter('all')
-    setCategoryFilter('')
-    setSearch('')
-  }
+  const clearFilters = () => { setTypeFilter('all'); setCategoryFilter(''); setSearch('') }
 
   const currentYear = getCurrentTaxYear()
   const years = [currentYear, currentYear - 1, currentYear - 2]
 
-  if (hhLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+  const memberName = activeMember?.display_name || activeMember?.email.split('@')[0] || ''
+
+  if (hhLoading) return (
+    <div className="flex h-full items-center justify-center">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+    </div>
+  )
+
+  // Family account with no member selected
+  if (lockedToFamily) return (
+    <div className="flex flex-1 items-center justify-center h-full px-6">
+      <div className="text-center">
+        <ArrowLeftRight className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+        <p className="text-sm font-medium text-gray-500">Select a family member to view transactions</p>
       </div>
-    )
-  }
+    </div>
+  )
+
+  const newTransactionHref = activeMemberId
+    ? `/transactions/new?memberId=${activeMemberId}`
+    : '/transactions/new'
 
   return (
     <div className="p-4 sm:p-6 lg:p-6">
       {/* Header */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-gray-900">Transactions</h1>
+        <h1 className="text-2xl font-bold text-gray-900">
+          {memberName ? `${memberName}'s Transactions` : 'Transactions'}
+        </h1>
         <div className="flex items-center gap-3">
           <select
             value={year}
@@ -102,7 +122,7 @@ export default function TransactionsPage() {
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
           <button
-            onClick={() => router.push('/transactions/new')}
+            onClick={() => router.push(newTransactionHref)}
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
           >
             <PlusCircle className="h-4 w-4" />
@@ -136,7 +156,6 @@ export default function TransactionsPage() {
 
       {/* Filters */}
       <div className="mb-4 space-y-2">
-        {/* Search */}
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input
@@ -147,44 +166,28 @@ export default function TransactionsPage() {
             className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-9 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           {search && (
-            <button
-              onClick={() => setSearch('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-            >
+            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
               <X className="h-4 w-4" />
             </button>
           )}
         </div>
 
-        {/* Type / Category / Sort row */}
         <div className="flex flex-wrap gap-2">
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
             <option value="all">All types</option>
             <option value="income">Income</option>
             <option value="expense">Expense</option>
           </select>
 
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          >
+          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
             <option value="">All categories</option>
-            {availableCategories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
+            {availableCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
 
-          {/* Sort dropdown — mobile only; desktop uses table header clicks */}
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortKey)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 lg:hidden"
-          >
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortKey)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 lg:hidden">
             <option value="date_desc">Date ↓</option>
             <option value="date_asc">Date ↑</option>
             <option value="amount_desc">Amount ↓</option>
@@ -196,23 +199,18 @@ export default function TransactionsPage() {
           </select>
 
           {hasActiveFilters && (
-            <button
-              onClick={clearFilters}
-              className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-700"
-            >
-              <X className="h-3.5 w-3.5" />
-              Clear
+            <button onClick={clearFilters}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:text-gray-700">
+              <X className="h-3.5 w-3.5" /> Clear
             </button>
           )}
         </div>
       </div>
 
-      {/* Count */}
       <p className="mb-3 text-sm text-gray-500">
         {filtered.length} {tab} transaction{filtered.length !== 1 ? 's' : ''}
         {hasActiveFilters ? ` (filtered from ${tabTransactions.length})` : ` in ${year}`}
-        {' · '}
-        <span className="text-gray-400">Click any row to edit</span>
+        {' · '}<span className="text-gray-400">Click any row to edit</span>
       </p>
 
       {loading ? (

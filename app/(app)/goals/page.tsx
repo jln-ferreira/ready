@@ -5,20 +5,20 @@ import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
 import { getCurrentTaxYear } from '@/utils/format'
 import { Target, Copy, Check, ChevronDown, Users } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 
-type Scope = 'personal' | 'family' | 'business'
+type Scope = 'family' | 'business'
 
 const MONTHS_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 const SCOPE_STYLES: Record<Scope, { tab: string; ring: string }> = {
-  personal: { tab: 'border-blue-600 text-blue-700',      ring: 'focus:ring-blue-100 focus:border-blue-400' },
   family:   { tab: 'border-purple-600 text-purple-700',  ring: 'focus:ring-purple-100 focus:border-purple-400' },
   business: { tab: 'border-emerald-600 text-emerald-700', ring: 'focus:ring-emerald-100 focus:border-emerald-400' },
 }
 
 const CATEGORIES: Record<Scope, string[]> = {
-  personal: ['Housing','Groceries','Transport','Utilities','Healthcare','Entertainment','Shopping','Dining Out','Savings','Other'],
   family:   ['Housing','Groceries','Transport','Utilities','Healthcare','Entertainment','Shopping','Dining Out','Savings','Other'],
   business: ['Advertising','Equipment','Insurance','Internet & Phone','Meals','Office Supplies','Rent','Software','Travel','Utilities','Vehicle','Other'],
 }
@@ -37,9 +37,16 @@ function makeEmptyState(categories: string[]): GoalState {
 
 export default function GoalsPage() {
   const { household, loading: hhLoading } = useHousehold()
-  const supabase = createClient()
+  const supabase     = createClient()
+  const searchParams = useSearchParams()
+  const { accountType, activeMemberId, effectiveUserId } = useActiveMembers()
 
-  const [scope, setScope]     = useState<Scope>('personal')
+  // Family account with no member: locked to family scope only
+  const lockedToFamily = accountType === 'family' && !activeMemberId
+
+  const [scope, setScope] = useState<Scope>(
+    lockedToFamily ? 'family' : (searchParams.get('scope') as Scope) ?? 'family'
+  )
   const [year, setYear]       = useState(getCurrentTaxYear())
   const [userId, setUserId]   = useState<string | null>(null)
   const [goals, setGoals]     = useState<GoalState>({})
@@ -64,12 +71,20 @@ export default function GoalsPage() {
     setCopiedFeedback(null)
   }, [scope, year])
 
+  // When locked to family mode, force scope back if it drifted
+  useEffect(() => {
+    if (lockedToFamily) setScope('family')
+  }, [lockedToFamily])
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id ?? null))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Use activeMemberId when a member is selected in the family account
+  const queryUserId = effectiveUserId ?? userId
+
   const loadGoals = useCallback(async () => {
-    if (!household || !userId) return
+    if (!household || !queryUserId) return
     setLoading(true)
 
     const query = supabase
@@ -80,7 +95,7 @@ export default function GoalsPage() {
       .eq('year', year)
 
     if (scope === 'family') query.is('user_id', null)
-    else                    query.eq('user_id', userId)
+    else                    query.eq('user_id', queryUserId)
 
     const { data } = await query
     const state = makeEmptyState(categories)
@@ -91,12 +106,12 @@ export default function GoalsPage() {
     }
     setGoals(state)
     setLoading(false)
-  }, [household, userId, scope, year, categories]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [household, queryUserId, scope, year, categories]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadGoals() }, [loadGoals])
 
   const saveGoal = useCallback(async (month: number, category: string, rawValue: string) => {
-    if (!household || !userId) return
+    if (!household || !queryUserId) return
     const amount = parseFloat(rawValue)
     if (isNaN(amount) && rawValue !== '') return
 
@@ -105,24 +120,22 @@ export default function GoalsPage() {
       [month]: { ...prev[month], [category]: { amount: rawValue, saving: true } },
     }))
 
-    if (!rawValue || isNaN(amount) || amount === 0) {
-      const q = supabase.from('cost_goals').delete()
-        .eq('household_id', household.id)
-        .eq('scope', scope).eq('year', year)
-        .eq('month', month).eq('category', category)
-      if (scope === 'family') q.is('user_id', null)
-      else                    q.eq('user_id', userId)
-      await q
-    } else {
-      await supabase.from('cost_goals').upsert({
+    // Always delete first, then insert if a value was given.
+    // This avoids the upsert onConflict issue with the expression-based unique index.
+    const delQ = supabase.from('cost_goals').delete()
+      .eq('household_id', household.id)
+      .eq('scope', scope).eq('year', year)
+      .eq('month', month).eq('category', category)
+    if (scope === 'family') delQ.is('user_id', null)
+    else                    delQ.eq('user_id', queryUserId)
+    await delQ
+
+    if (rawValue && !isNaN(amount) && amount !== 0) {
+      await supabase.from('cost_goals').insert({
         household_id: household.id,
         scope, year, month, category, amount,
         updated_at: new Date().toISOString(),
-        ...(scope === 'family' ? { user_id: null } : { user_id: userId }),
-      }, {
-        onConflict: scope === 'family'
-          ? 'household_id,scope,year,month,category'
-          : 'user_id,household_id,scope,year,month,category',
+        ...(scope === 'family' ? { user_id: null } : { user_id: queryUserId }),
       })
     }
 
@@ -130,7 +143,7 @@ export default function GoalsPage() {
       ...prev,
       [month]: { ...prev[month], [category]: { amount: rawValue, saving: false } },
     }))
-  }, [household, userId, scope, year]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [household, queryUserId, scope, year]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCopyTo = async (sourceMonth: number, target: number | 'all') => {
     if (!household || !userId) return
@@ -185,20 +198,22 @@ export default function GoalsPage() {
         </select>
       </div>
 
-      {/* Scope tabs */}
-      <div className="flex border-b border-gray-200 mb-6">
-        {(['personal', 'family', 'business'] as Scope[]).map(s => (
-          <button
-            key={s}
-            onClick={() => setScope(s)}
-            className={`mr-6 pb-3 border-b-2 text-sm capitalize transition-colors ${
-              scope === s ? SCOPE_STYLES[s].tab + ' font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {s === 'family' ? 'Family' : s}
-          </button>
-        ))}
-      </div>
+      {/* Scope tabs — hidden when family account with no member active */}
+      {!lockedToFamily && (
+        <div className="flex border-b border-gray-200 mb-6">
+          {(['family', 'business'] as Scope[]).map(s => (
+            <button
+              key={s}
+              onClick={() => setScope(s)}
+              className={`mr-6 pb-3 border-b-2 text-sm capitalize transition-colors ${
+                scope === s ? SCOPE_STYLES[s].tab + ' font-semibold' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {s === 'family' ? 'Family' : s}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Family shared banner */}
       {scope === 'family' && (

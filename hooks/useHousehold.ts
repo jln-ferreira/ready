@@ -19,15 +19,13 @@ export function useHousehold() {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return
 
-        // Get household via join table
-        const { data: uh, error: uhErr } = await supabase
-          .from('user_households')
-          .select('household_id')
-          .eq('user_id', user.id)
-          .limit(1)
-          .single()
+        // Use the security-definer RPC to get the preferred household.
+        // It prefers the shared family household over a personal one,
+        // and can query across user_households rows (bypasses RLS).
+        const { data: householdId, error: rpcErr } = await supabase
+          .rpc('my_preferred_household_id')
 
-        if (uhErr || !uh) {
+        if (rpcErr || !householdId) {
           setError('No household found. Please contact support.')
           return
         }
@@ -35,14 +33,14 @@ export function useHousehold() {
         const { data: hh, error: hhErr } = await supabase
           .from('households')
           .select('*')
-          .eq('id', uh.household_id)
+          .eq('id', householdId)
           .single()
 
         if (hhErr) throw hhErr
         setHousehold(hh)
 
         const [{ data: accts }, { data: cats }] = await Promise.all([
-          supabase.from('accounts').select('*').eq('household_id', uh.household_id),
+          supabase.from('accounts').select('*').eq('household_id', householdId),
           supabase.from('categories').select('*').order('name'),
         ])
 

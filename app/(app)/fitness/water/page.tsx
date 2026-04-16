@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { format, subDays, addDays, isToday, parseISO } from 'date-fns'
 import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
+import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 import { Droplets, Plus, Minus, ChevronLeft, ChevronRight } from 'lucide-react'
 
 type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active'
@@ -26,7 +27,7 @@ interface LeaderboardEntry {
 }
 
 interface HistoryDay {
-  date: string   // YYYY-MM-DD
+  date: string
   amount_ml: number
 }
 
@@ -40,19 +41,30 @@ const todayStr = () => format(new Date(), 'yyyy-MM-dd')
 
 export default function WaterIntakePage() {
   const { household, loading: hhLoading } = useHousehold()
+  const { accountType, activeMemberId, activeMember } = useActiveMembers()
   const supabase = createClient()
 
-  const [selectedDate, setSelectedDate] = useState(todayStr())
-  const [myAmount, setMyAmount]         = useState(0)
-  const [myGoal, setMyGoal]             = useState(2500)
-  const [leaderboard, setLeaderboard]   = useState<LeaderboardEntry[]>([])
-  const [history, setHistory]           = useState<HistoryDay[]>([])
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [loading, setLoading]           = useState(true)
-  const [adding, setAdding]             = useState(false)
-  const [customMl, setCustomMl]         = useState('')
-  const animRef = useRef<number>(0)
-  const [displayAmount, setDisplayAmount] = useState(0)
+  // Pure family account with no member selected — show leaderboard only
+  const lockedToFamily = accountType === 'family' && !activeMemberId
+
+  const [selectedDate, setSelectedDate]     = useState(todayStr())
+  const [myAmount, setMyAmount]             = useState(0)
+  const [myGoal, setMyGoal]                 = useState(2500)
+  const [leaderboard, setLeaderboard]       = useState<LeaderboardEntry[]>([])
+  const [history, setHistory]               = useState<HistoryDay[]>([])
+  // The logged-in user's own ID — loaded once from auth, used as bootstrap trigger
+  const [currentUserId, setCurrentUserId]   = useState<string | null>(null)
+  const [loading, setLoading]               = useState(true)
+  const [adding, setAdding]                 = useState(false)
+  const [addError, setAddError]             = useState<string | null>(null)
+  const [customMl, setCustomMl]             = useState('')
+  const animRef                             = useRef<number>(0)
+  const [displayAmount, setDisplayAmount]   = useState(0)
+
+  // The user whose data we show/edit:
+  //   family account + member selected → that member's ID
+  //   everyone else                    → own auth ID
+  const targetUserId = activeMemberId ?? currentUserId
 
   // Smooth count-up animation
   useEffect(() => {
@@ -66,32 +78,51 @@ export default function WaterIntakePage() {
     return () => clearTimeout(animRef.current)
   }, [myAmount, displayAmount])
 
-  // Initial load (profile + history)
+  // Initial load: profile + history (mirrors original pattern — fetches own user, sets currentUserId)
   useEffect(() => {
     if (!household) return
     loadProfile()
     loadHistory()
-  }, [household]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [household, activeMemberId]) // re-run when switching members // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reload day data when date changes
+  // Reload day data when date changes or when currentUserId first becomes available
   useEffect(() => {
     if (!household || !currentUserId) return
+    if (lockedToFamily) {
+      loadLeaderboard(selectedDate)
+      setLoading(false)
+      return
+    }
     loadDay(selectedDate)
-  }, [selectedDate, currentUserId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedDate, currentUserId, household, activeMemberId, lockedToFamily]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadProfile() {
     const { data: { user } } = await supabase.auth.getUser()
     setCurrentUserId(user?.id ?? null)
     if (!user) { setLoading(false); return }
 
-    const { data } = await supabase
-      .from('fitness_profiles')
-      .select('weight_kg, activity_level')
-      .eq('user_id', user.id)
-      .single()
+    let weightKg: number | null = null
+    let activityLevel: ActivityLevel = 'moderate'
 
-    const goal = calcGoal(data?.weight_kg ?? null, (data?.activity_level as ActivityLevel) ?? 'moderate')
-    setMyGoal(goal)
+    if (accountType === 'family' && activeMemberId) {
+      // VilelaFerreira can't read Jose's fitness_profiles row directly (RLS) — use service-role API
+      const res = await fetch(`/api/member/profile?memberId=${activeMemberId}`)
+      if (res.ok) {
+        const json = await res.json()
+        weightKg      = json.fitness?.weight_kg ?? null
+        activityLevel = (json.fitness?.activity_level as ActivityLevel) ?? 'moderate'
+      }
+    } else {
+      const { data } = await supabase
+        .from('fitness_profiles')
+        .select('weight_kg, activity_level')
+        .eq('user_id', user.id)
+        .maybeSingle()
+      weightKg      = data?.weight_kg ?? null
+      activityLevel = (data?.activity_level as ActivityLevel) ?? 'moderate'
+    }
+
+    setMyGoal(calcGoal(weightKg, activityLevel))
   }
 
   const loadDay = useCallback(async (date: string) => {
@@ -99,47 +130,96 @@ export default function WaterIntakePage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setLoading(false); return }
 
-    const { data: logData } = await supabase
-      .from('water_logs')
-      .select('amount_ml')
-      .eq('user_id', user.id)
-      .eq('log_date', date)
-      .single()
+    const uid = activeMemberId ?? user.id
 
-    const amt = logData?.amount_ml ?? 0
-    setMyAmount(amt)
-    setDisplayAmount(amt)
+    // Family account viewing a member → use service-role API to bypass RLS
+    if (accountType === 'family' && activeMemberId) {
+      const res = await fetch(`/api/member/water?memberId=${activeMemberId}&date=${date}`)
+      if (res.ok) {
+        const json = await res.json()
+        const amt = json.day_amount_ml ?? 0
+        setMyAmount(amt)
+        setDisplayAmount(amt)
+      }
+    } else {
+      const { data: logData } = await supabase
+        .from('water_logs')
+        .select('amount_ml')
+        .eq('user_id', uid)
+        .eq('log_date', date)
+        .single()
+      const amt = logData?.amount_ml ?? 0
+      setMyAmount(amt)
+      setDisplayAmount(amt)
+    }
 
     const { data: lb } = await supabase.rpc('get_household_water_leaderboard', { p_date: date })
     setLeaderboard((lb as LeaderboardEntry[]) ?? [])
     setLoading(false)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accountType, activeMemberId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadLeaderboard(date: string) {
+    const { data: lb } = await supabase.rpc('get_household_water_leaderboard', { p_date: date })
+    setLeaderboard((lb as LeaderboardEntry[]) ?? [])
+  }
 
   async function loadHistory() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
+    const uid  = activeMemberId ?? user.id
     const from = format(subDays(new Date(), 6), 'yyyy-MM-dd')
     const to   = todayStr()
-    const { data } = await supabase
-      .from('water_logs')
-      .select('log_date, amount_ml')
-      .eq('user_id', user.id)
-      .gte('log_date', from)
-      .lte('log_date', to)
-    setHistory(
-      ((data ?? []) as { log_date: string; amount_ml: number }[]).map(r => ({
-        date: r.log_date,
-        amount_ml: r.amount_ml,
-      }))
-    )
+
+    if (accountType === 'family' && activeMemberId) {
+      const res = await fetch(`/api/member/water?memberId=${activeMemberId}&date=${to}`)
+      if (res.ok) {
+        const json = await res.json()
+        setHistory(json.history ?? [])
+      }
+    } else {
+      const { data } = await supabase
+        .from('water_logs')
+        .select('log_date, amount_ml')
+        .eq('user_id', uid)
+        .gte('log_date', from)
+        .lte('log_date', to)
+      setHistory(
+        ((data ?? []) as { log_date: string; amount_ml: number }[]).map(r => ({
+          date: r.log_date,
+          amount_ml: r.amount_ml,
+        }))
+      )
+    }
   }
 
   async function addWater(ml: number) {
     if (!ml || adding) return
     setAdding(true)
-    const { data } = await supabase.rpc('log_water', { p_amount_ml: ml, p_date: selectedDate })
-    if (data != null) {
-      setMyAmount(data as number)
+    setAddError(null)
+
+    let newAmount: number | null = null
+
+    if (accountType === 'family' && activeMemberId) {
+      // Use service-role API to log water for the selected member
+      const res = await fetch('/api/member/water', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: activeMemberId, amountMl: ml, date: selectedDate }),
+      })
+      if (res.ok) {
+        const json = await res.json()
+        newAmount = json.amount_ml
+      } else {
+        const json = await res.json().catch(() => ({}))
+        setAddError(json.error ?? `Failed to log water (${res.status})`)
+      }
+    } else {
+      const { data } = await supabase.rpc('log_water', { p_amount_ml: ml, p_date: selectedDate })
+      newAmount = data as number
+    }
+
+    if (newAmount != null) {
+      setMyAmount(newAmount)
       await loadHistory()
       const { data: lb } = await supabase.rpc('get_household_water_leaderboard', { p_date: selectedDate })
       setLeaderboard((lb as LeaderboardEntry[]) ?? [])
@@ -153,8 +233,10 @@ export default function WaterIntakePage() {
     if (next <= todayStr()) setSelectedDate(next)
   }
   const isTodaySelected = selectedDate === todayStr()
-
   const pct = Math.min(100, myGoal > 0 ? Math.round((displayAmount / myGoal) * 100) : 0)
+
+  // "You" = the person whose data is shown (active member or own account, never pure family)
+  const meUserId = activeMemberId ?? currentUserId
 
   if (hhLoading) return <Spinner />
 
@@ -165,6 +247,10 @@ export default function WaterIntakePage() {
     return { date: d, amount: entry?.amount_ml ?? 0 }
   })
 
+  const pageTitle = activeMember
+    ? `${activeMember.display_name || activeMember.email.split('@')[0]}'s Water`
+    : 'Water Intake'
+
   return (
     <div className="max-w-lg mx-auto px-4 md:px-6 py-8 space-y-8">
 
@@ -172,13 +258,10 @@ export default function WaterIntakePage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Droplets className="h-5 w-5 text-blue-500" />
-          <h1 className="text-xl font-semibold text-gray-900">Water Intake</h1>
+          <h1 className="text-xl font-semibold text-gray-900">{pageTitle}</h1>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            onClick={goToPrev}
-            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 transition-colors"
-          >
+          <button onClick={goToPrev} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 transition-colors">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
@@ -206,111 +289,121 @@ export default function WaterIntakePage() {
         </p>
       )}
 
-      {/* ── Water glass + amount ── */}
-      {loading ? (
-        <div className="flex justify-center py-8"><Spinner /></div>
-      ) : (
-        <div className="flex flex-col items-center gap-4">
-          <WaterGlass pct={pct} />
-          <div className="text-center">
-            <p className="text-3xl font-bold text-blue-600 tabular-nums">{displayAmount.toLocaleString()} ml</p>
-            <p className="text-sm text-gray-400 mt-0.5">of {myGoal.toLocaleString()} ml goal · {pct}%</p>
+      {/* ── Personal water sections — hidden for pure family account ── */}
+      {!lockedToFamily && (
+        <>
+          {loading ? (
+            <div className="flex justify-center py-8"><Spinner /></div>
+          ) : (
+            <div className="flex flex-col items-center gap-4">
+              <WaterGlass pct={pct} />
+              <div className="text-center">
+                <p className="text-3xl font-bold text-blue-600 tabular-nums">{displayAmount.toLocaleString()} ml</p>
+                <p className="text-sm text-gray-400 mt-0.5">of {myGoal.toLocaleString()} ml goal · {pct}%</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Add error ── */}
+          {addError && (
+            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              {addError}
+            </p>
+          )}
+
+          {/* ── Quick add ── */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+              {isTodaySelected ? 'Add water' : `Log for ${format(parseISO(selectedDate), 'MMM d')}`}
+            </p>
+            <div className="grid grid-cols-4 gap-2">
+              {[250, 500, 750, 1000].map(ml => (
+                <button
+                  key={ml}
+                  onClick={() => addWater(ml)}
+                  disabled={adding}
+                  className="flex flex-col items-center justify-center py-3 rounded-2xl border border-blue-100 bg-blue-50 hover:bg-blue-100 active:scale-95 transition-all disabled:opacity-50"
+                >
+                  <Droplets className="h-4 w-4 text-blue-400 mb-1" />
+                  <span className="text-xs font-semibold text-blue-700">+{ml}ml</span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <input
+                type="number" min="1" max="2000" placeholder="Custom ml…"
+                value={customMl}
+                onChange={e => setCustomMl(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { addWater(parseInt(customMl)); setCustomMl('') } }}
+                className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-blue-400 focus:outline-none"
+              />
+              <button
+                onClick={() => { addWater(parseInt(customMl)); setCustomMl('') }}
+                disabled={!customMl || adding}
+                className="flex items-center gap-1 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                <Plus className="h-4 w-4" /> Add
+              </button>
+              <button
+                onClick={() => addWater(-250)}
+                disabled={adding || myAmount < 250}
+                title="Remove 250ml"
+                className="p-2.5 rounded-xl border border-gray-200 text-gray-400 hover:text-red-400 hover:border-red-200 disabled:opacity-30 transition-colors"
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-        </div>
+
+          {/* ── 7-day history strip ── */}
+          <section>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Last 7 days</p>
+            <div className="grid grid-cols-7 gap-1.5">
+              {last7.map(day => {
+                const daypct    = myGoal > 0 ? Math.min(100, Math.round((day.amount / myGoal) * 100)) : 0
+                const isSelected = day.date === selectedDate
+                const isTodayDay = isToday(parseISO(day.date))
+                return (
+                  <button
+                    key={day.date}
+                    onClick={() => setSelectedDate(day.date)}
+                    className={`flex flex-col items-center gap-1.5 py-2 rounded-xl border transition-colors ${
+                      isSelected ? 'border-blue-300 bg-blue-50' : 'border-gray-100 bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className={`text-xs font-medium ${
+                      isSelected ? 'text-blue-600' : isTodayDay ? 'text-gray-900' : 'text-gray-400'
+                    }`}>
+                      {format(parseISO(day.date), 'EEE')[0]}
+                    </span>
+                    <div className="w-5 h-8 rounded-full bg-gray-100 overflow-hidden flex items-end">
+                      <div
+                        className={`w-full rounded-full transition-all duration-500 ${
+                          daypct >= 100 ? 'bg-green-400' : daypct > 50 ? 'bg-blue-400' : daypct > 0 ? 'bg-blue-200' : 'bg-gray-100'
+                        }`}
+                        style={{ height: `${Math.max(0, daypct)}%` }}
+                      />
+                    </div>
+                    <span className={`text-xs tabular-nums ${isSelected ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>
+                      {daypct}%
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        </>
       )}
 
-      {/* ── Quick add ── */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
-          {isTodaySelected ? 'Add water' : `Log for ${format(parseISO(selectedDate), 'MMM d')}`}
-        </p>
-        <div className="grid grid-cols-4 gap-2">
-          {[250, 500, 750, 1000].map(ml => (
-            <button
-              key={ml}
-              onClick={() => addWater(ml)}
-              disabled={adding}
-              className="flex flex-col items-center justify-center py-3 rounded-2xl border border-blue-100 bg-blue-50 hover:bg-blue-100 active:scale-95 transition-all disabled:opacity-50"
-            >
-              <Droplets className="h-4 w-4 text-blue-400 mb-1" />
-              <span className="text-xs font-semibold text-blue-700">+{ml}ml</span>
-            </button>
-          ))}
-        </div>
-        <div className="mt-3 flex gap-2">
-          <input
-            type="number" min="1" max="2000" placeholder="Custom ml…"
-            value={customMl}
-            onChange={e => setCustomMl(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') { addWater(parseInt(customMl)); setCustomMl('') } }}
-            className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-blue-400 focus:outline-none"
-          />
-          <button
-            onClick={() => { addWater(parseInt(customMl)); setCustomMl('') }}
-            disabled={!customMl || adding}
-            className="flex items-center gap-1 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            <Plus className="h-4 w-4" /> Add
-          </button>
-          <button
-            onClick={() => addWater(-250)}
-            disabled={adding || myAmount < 250}
-            title="Remove 250ml"
-            className="p-2.5 rounded-xl border border-gray-200 text-gray-400 hover:text-red-400 hover:border-red-200 disabled:opacity-30 transition-colors"
-          >
-            <Minus className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* ── 7-day history strip ── */}
-      <section>
-        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Last 7 days</p>
-        <div className="grid grid-cols-7 gap-1.5">
-          {last7.map(day => {
-            const daypct = myGoal > 0 ? Math.min(100, Math.round((day.amount / myGoal) * 100)) : 0
-            const isSelected = day.date === selectedDate
-            const isTodayDay = isToday(parseISO(day.date))
-            return (
-              <button
-                key={day.date}
-                onClick={() => setSelectedDate(day.date)}
-                className={`flex flex-col items-center gap-1.5 py-2 rounded-xl border transition-colors ${
-                  isSelected ? 'border-blue-300 bg-blue-50' : 'border-gray-100 bg-white hover:bg-gray-50'
-                }`}
-              >
-                <span className={`text-xs font-medium ${
-                  isSelected ? 'text-blue-600' : isTodayDay ? 'text-gray-900' : 'text-gray-400'
-                }`}>
-                  {format(parseISO(day.date), 'EEE')[0]}
-                </span>
-                {/* Mini bar */}
-                <div className="w-5 h-8 rounded-full bg-gray-100 overflow-hidden flex items-end">
-                  <div
-                    className={`w-full rounded-full transition-all duration-500 ${
-                      daypct >= 100 ? 'bg-green-400' : daypct > 50 ? 'bg-blue-400' : daypct > 0 ? 'bg-blue-200' : 'bg-gray-100'
-                    }`}
-                    style={{ height: `${Math.max(0, daypct)}%` }}
-                  />
-                </div>
-                <span className={`text-xs tabular-nums ${isSelected ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>
-                  {daypct}%
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      </section>
-
       {/* ── Family leaderboard ── */}
-      {leaderboard.length > 1 && (
+      {leaderboard.length > 0 && (
         <section>
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
             Family {isTodaySelected ? 'today' : format(parseISO(selectedDate), 'MMM d')} 🏆
           </p>
           <div className="space-y-2">
             {leaderboard.map((entry, rank) => {
-              const isMe = entry.user_id === currentUserId
+              const isMe = !lockedToFamily && entry.user_id === meUserId
               const name = isMe ? 'You' : entry.email.split('@')[0]
               return (
                 <div

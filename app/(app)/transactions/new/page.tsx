@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import { useHousehold } from '@/hooks/useHousehold'
 import { useTransactions } from '@/hooks/useTransactions'
@@ -9,12 +9,15 @@ import type { TransactionFormData } from '@/types'
 
 export default function NewTransactionPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const memberId = searchParams.get('memberId') ?? undefined
+
   const { household, accounts, categories, loading } = useHousehold()
   const { addTransaction, transactions } = useTransactions({ householdId: household?.id })
 
   const handleSubmit = async (data: TransactionFormData) => {
     if (!household) return { error: 'No household found' }
-    const result = await addTransaction(data, household.id)
+    const result = await addTransaction(data, household.id, memberId)
     return result
   }
 

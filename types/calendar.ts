@@ -1,5 +1,13 @@
-export type EventCategory = 'Work' | 'Personal' | 'Health' | 'Study' | 'Finance' | 'Other'
+export type EventCategory  = 'Work' | 'Personal' | 'Health' | 'Study' | 'Finance' | 'Other'
 export type EventRecurrence = 'none' | 'daily' | 'weekly' | 'monthly'
+export type EventReminder  = 'none' | 'at_time' | '1_day_before' | '2_days_before'
+
+export const REMINDER_LABELS: Record<EventReminder, string> = {
+  none:          'None',
+  at_time:       'At time of event',
+  '1_day_before':  '1 day before',
+  '2_days_before': '2 days before',
+}
 
 export const CATEGORIES: EventCategory[] = ['Work', 'Personal', 'Health', 'Study', 'Finance', 'Other']
 
@@ -23,6 +31,7 @@ export interface CalendarEvent {
   location: string | null
   category: EventCategory
   recurrence: EventRecurrence
+  reminder: EventReminder
   created_at: string
   updated_at: string
 }
