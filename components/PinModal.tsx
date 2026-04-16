@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Delete, X } from 'lucide-react'
 
 interface PinModalProps {
@@ -66,7 +67,7 @@ export default function PinModal({ memberName, memberColor, onSuccess, onCancel,
     return () => window.removeEventListener('keydown', handler)
   }, [push, pop, onCancel])
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="relative w-72 rounded-3xl bg-white shadow-2xl overflow-hidden">
 
@@ -142,6 +143,7 @@ export default function PinModal({ memberName, memberColor, onSuccess, onCancel,
           })}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
