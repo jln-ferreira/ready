@@ -6,8 +6,8 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   ArrowLeftRight, BarChart2, FileText, Home, LogOut,
-  Users, X, ShoppingCart, ListChecks, Utensils, StickyNote,
-  Target, Droplets, User, ChevronDown,
+  Users, X, ShoppingCart, ListChecks, Utensils,
+  Target, Droplets, User, ChevronDown, Moon,
 } from 'lucide-react'
 import { AppLogo } from './AppLogo'
 import { useActiveMembers } from '@/contexts/ActiveMemberContext'
@@ -49,11 +49,11 @@ function initials(name: string, email: string): string {
 interface NavItem { href: string; label: string; icon: React.ElementType }
 
 const FAMILY_ITEMS: NavItem[] = [
-  { href: '/family',      label: 'Members',     icon: Users },
-  { href: '/shopping',    label: 'Shopping',    icon: ShoppingCart },
-  { href: '/chores',      label: 'Chores',      icon: ListChecks },
-  { href: '/meals',       label: 'Meals',       icon: Utensils },
-  { href: '/noticeboard', label: 'Noticeboard', icon: StickyNote },
+  { href: '/family',        label: 'Members',  icon: Users },
+  { href: '/shopping',      label: 'Shopping', icon: ShoppingCart },
+  { href: '/chores',        label: 'Chores',   icon: ListChecks },
+  { href: '/meals',         label: 'Meals',    icon: Utensils },
+  { href: '/family/sleep',  label: 'Sono',     icon: Moon },
 ]
 
 const FINANCE_INDIVIDUAL: NavItem[] = [
@@ -111,7 +111,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   } = useActiveMembers()
 
   const { household } = useHousehold()
-  const { choresPending, noticeboardUnread } = useSidebarBadges(household?.id)
+  const { choresPending } = useSidebarBadges(household?.id)
 
   // Active color: member's color when one is selected, else own color
   const colorHex    = HEX[activeMember?.sidebar_color ?? ownColorKey] ?? HEX.blue
@@ -280,8 +280,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 <div className="mt-0.5 space-y-0.5 pb-1">
                   {section.items.map(({ href, label, icon: Icon }) => {
                     const badge =
-                      href === '/chores'      ? (choresPending > 0 ? choresPending : undefined) :
-                      href === '/noticeboard' ? (noticeboardUnread  ? 'dot'        : undefined) :
+                      href === '/chores' ? (choresPending > 0 ? choresPending : undefined) :
                       undefined
                     return navLink(href, label, Icon, badge as number | 'dot' | undefined)
                   })}

@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { format } from 'date-fns'
+import { useState, useEffect, useMemo } from 'react'
+import { format, subMonths, parseISO, differenceInDays, subDays } from 'date-fns'
 import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
-import { ListChecks, Plus, Trash2, CheckCircle2, Circle } from 'lucide-react'
+import { ListChecks, Plus, Trash2, Circle, Trophy } from 'lucide-react'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -15,6 +15,7 @@ interface Chore {
   emoji: string | null
   recurrence: 'daily' | 'weekly'
   day_of_week: number | null
+  points: number
   created_at: string
 }
 
@@ -23,81 +24,118 @@ interface ChoreLog {
   chore_id: string
   done_by: string
   done_date: string
+  points_earned: number | null
 }
 
-interface Member {
+interface MemberProfile {
   user_id: string
   email: string
+  display_name?: string
+}
+
+// Most recent date this chore was supposed to be done (today or earlier)
+function getLastDueDateStr(chore: Chore): string {
+  const today = new Date()
+  if (chore.recurrence === 'daily') return format(today, 'yyyy-MM-dd')
+  const todayDow = today.getDay()
+  const choreDow = chore.day_of_week ?? 0
+  const daysAgo = (todayDow - choreDow + 7) % 7
+  const lastDue = new Date(today)
+  lastDue.setDate(today.getDate() - daysAgo)
+  return format(lastDue, 'yyyy-MM-dd')
+}
+
+// Open = not yet closed since last due date (and chore existed when it was due)
+function isChoreOpen(chore: Chore, logs: ChoreLog[]): boolean {
+  const lastDueStr = getLastDueDateStr(chore)
+  const createdStr = format(new Date(chore.created_at), 'yyyy-MM-dd')
+  if (createdStr > lastDueStr) return false
+  return !logs.some(l => l.chore_id === chore.id && l.done_date >= lastDueStr)
 }
 
 export default function ChoresPage() {
   const { household, loading: householdLoading } = useHousehold()
   const supabase = createClient()
 
-  const [chores, setChores]   = useState<Chore[]>([])
-  const [logs, setLogs]       = useState<ChoreLog[]>([])
-  const [members, setMembers] = useState<Member[]>([])
+  const [chores, setChores] = useState<Chore[]>([])
+  const [logs, setLogs] = useState<ChoreLog[]>([])
+  const [members, setMembers] = useState<MemberProfile[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [closing, setClosing] = useState<string | null>(null)
 
-  // Add chore form
+  // Form state
   const [showForm, setShowForm] = useState(false)
-  const [newTitle, setNewTitle]           = useState('')
-  const [newEmoji, setNewEmoji]           = useState('')
+  const [newTitle, setNewTitle] = useState('')
+  const [newEmoji, setNewEmoji] = useState('')
   const [newRecurrence, setNewRecurrence] = useState<'daily' | 'weekly'>('weekly')
-  const [newDayOfWeek, setNewDayOfWeek]   = useState<number>(1) // Monday
+  const [newDayOfWeek, setNewDayOfWeek] = useState(1)
+  const [newPoints, setNewPoints] = useState(10)
   const [saving, setSaving] = useState(false)
-
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const todayDow = new Date().getDay()
 
   useEffect(() => {
     if (!household) return
     loadAll()
   }, [household]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-suggest points when recurrence changes
+  useEffect(() => {
+    setNewPoints(newRecurrence === 'daily' ? 5 : 10)
+  }, [newRecurrence])
+
   async function loadAll() {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     setCurrentUserId(user?.id ?? null)
 
-    const [choreRes, logRes, memberRes] = await Promise.all([
+    const since = format(subMonths(new Date(), 12), 'yyyy-MM-dd')
+
+    const [choreRes, logRes] = await Promise.all([
       supabase.from('chores').select('*').eq('household_id', household!.id).order('created_at'),
-      supabase.from('chore_logs').select('*').eq('household_id', household!.id).eq('done_date', today),
-      supabase.rpc('get_household_members'),
+      supabase.from('chore_logs').select('*').eq('household_id', household!.id)
+        .gte('done_date', since).order('done_date', { ascending: false }),
     ])
+
+    // Try profiles RPC, fall back to basic members
+    const { data: profileData, error: profileErr } = await supabase.rpc('get_household_members_with_profiles')
+    let memberData: MemberProfile[]
+    if (!profileErr && profileData) {
+      memberData = profileData as MemberProfile[]
+    } else {
+      const { data: basicData } = await supabase.rpc('get_household_members')
+      memberData = (basicData ?? []) as MemberProfile[]
+    }
 
     setChores((choreRes.data as Chore[]) ?? [])
     setLogs((logRes.data as ChoreLog[]) ?? [])
-    setMembers((memberRes.data as Member[]) ?? [])
+    setMembers(memberData)
     setLoading(false)
   }
 
-  async function toggleDone(chore: Chore) {
-    const existingLog = logs.find(l => l.chore_id === chore.id)
+  async function markDone(chore: Chore) {
+    if (!currentUserId || closing) return
+    setClosing(chore.id)
+    const today = format(new Date(), 'yyyy-MM-dd')
+    const { data, error } = await supabase
+      .from('chore_logs')
+      .upsert(
+        {
+          chore_id: chore.id,
+          household_id: household!.id,
+          done_by: currentUserId,
+          done_date: today,
+          points_earned: chore.points,
+        },
+        { onConflict: 'chore_id,done_date' }
+      )
+      .select()
+      .single()
 
-    if (existingLog) {
-      // Undo
-      const { error } = await supabase.from('chore_logs').delete().eq('id', existingLog.id)
-      if (!error) {
-        setLogs(prev => prev.filter(l => l.id !== existingLog.id))
-        window.dispatchEvent(new Event('chore-toggled'))
-      }
-    } else {
-      // Mark done — upsert to handle race conditions
-      if (!currentUserId) return
-      const { data, error } = await supabase
-        .from('chore_logs')
-        .upsert(
-          { chore_id: chore.id, household_id: household!.id, done_by: currentUserId, done_date: today },
-          { onConflict: 'chore_id,done_date' }
-        )
-        .select().single()
-      if (!error && data) {
-        setLogs(prev => [...prev.filter(l => l.chore_id !== chore.id), data as ChoreLog])
-        window.dispatchEvent(new Event('chore-toggled'))
-      }
+    if (!error && data) {
+      setLogs(prev => [data as ChoreLog, ...prev.filter(l => !(l.chore_id === chore.id && l.done_date === today))])
+      window.dispatchEvent(new Event('chore-toggled'))
     }
+    setClosing(null)
   }
 
   async function addChore() {
@@ -111,11 +149,13 @@ export default function ChoresPage() {
         emoji: newEmoji.trim() || null,
         recurrence: newRecurrence,
         day_of_week: newRecurrence === 'weekly' ? newDayOfWeek : null,
+        points: newPoints,
       })
-      .select().single()
+      .select()
+      .single()
     if (!error && data) {
       setChores(prev => [...prev, data as Chore])
-      setNewTitle(''); setNewEmoji(''); setNewRecurrence('weekly'); setNewDayOfWeek(1)
+      setNewTitle(''); setNewEmoji(''); setNewRecurrence('weekly'); setNewDayOfWeek(1); setNewPoints(10)
       setShowForm(false)
     }
     setSaving(false)
@@ -126,18 +166,69 @@ export default function ChoresPage() {
     if (!error) {
       setChores(prev => prev.filter(c => c.id !== id))
       setLogs(prev => prev.filter(l => l.chore_id !== id))
+      window.dispatchEvent(new Event('chore-toggled'))
     }
   }
 
   function memberName(userId: string) {
     const m = members.find(m => m.user_id === userId)
     if (!m) return 'Someone'
-    return userId === currentUserId ? 'You' : m.email.split('@')[0]
+    if (userId === currentUserId) return 'You'
+    return m.display_name || m.email.split('@')[0]
   }
 
-  const dueToday = chores.filter(c =>
-    c.recurrence === 'daily' || (c.recurrence === 'weekly' && c.day_of_week === todayDow)
+  const openChores = useMemo(
+    () => chores.filter(c => isChoreOpen(c, logs)),
+    [chores, logs]
   )
+
+  // Consecutive days the current user closed at least one chore
+  const choreStreak = useMemo(() => {
+    const dates = [...new Set(
+      logs.filter(l => l.done_by === currentUserId).map(l => l.done_date)
+    )].sort().reverse()
+    if (!dates.length) return 0
+    const today     = format(new Date(), 'yyyy-MM-dd')
+    const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
+    if (dates[0] !== today && dates[0] !== yesterday) return 0
+    let streak = 1
+    for (let i = 1; i < dates.length; i++) {
+      if (differenceInDays(parseISO(dates[i - 1]), parseISO(dates[i])) === 1) streak++
+      else break
+    }
+    return streak
+  }, [logs, currentUserId])
+
+  // Monthly leaderboard: last 6 months with data, sorted newest first
+  const leaderboard = useMemo(() => {
+    const monthMap: Record<string, Record<string, number>> = {}
+    for (const log of logs) {
+      if (!log.points_earned) continue
+      const month = log.done_date.slice(0, 7)
+      if (!monthMap[month]) monthMap[month] = {}
+      monthMap[month][log.done_by] = (monthMap[month][log.done_by] ?? 0) + log.points_earned
+    }
+    return Object.keys(monthMap)
+      .sort()
+      .reverse()
+      .slice(0, 6)
+      .map(month => {
+        const byMember = monthMap[month]
+        // Object.entries keys are unique by definition, but deduplicate defensively
+        const seen = new Set<string>()
+        const sorted = Object.entries(byMember)
+          .filter(([uid]) => { if (seen.has(uid)) return false; seen.add(uid); return true })
+          .sort((a, b) => b[1] - a[1])
+        const max = sorted[0]?.[1] ?? 1
+        return {
+          month,
+          label: format(parseISO(`${month}-01`), 'MMMM yyyy'),
+          winner: sorted[0]?.[0] ?? null,
+          max,
+          sorted,
+        }
+      })
+  }, [logs])
 
   if (householdLoading) return <Spinner />
 
@@ -149,49 +240,51 @@ export default function ChoresPage() {
         <ListChecks className="h-5 w-5 text-blue-600" />
         <h1 className="text-xl font-semibold text-gray-900">Chores</h1>
         <span className="text-sm text-gray-400">{format(new Date(), 'EEEE, MMM d')}</span>
+        {choreStreak > 0 && (
+          <span className="ml-auto text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-100 px-2.5 py-0.5 rounded-full">
+            🔥 {choreStreak}-day streak
+          </span>
+        )}
       </div>
 
-      {/* Due Today */}
+      {/* Open Tasks */}
       <section>
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Due Today</h2>
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+          Open Tasks
+          {openChores.length > 0 && (
+            <span className="ml-1.5 text-blue-500">({openChores.length})</span>
+          )}
+        </h2>
         {loading ? (
           <div className="flex justify-center py-6"><Spinner /></div>
-        ) : dueToday.length === 0 ? (
-          <p className="text-sm text-gray-400 py-4 text-center">No chores scheduled for today.</p>
+        ) : openChores.length === 0 ? (
+          <p className="text-sm text-gray-400 py-4 text-center">All caught up! 🎉</p>
         ) : (
           <div className="space-y-2">
-            {dueToday.map(chore => {
-              const log = logs.find(l => l.chore_id === chore.id)
-              return (
-                <div
-                  key={chore.id}
-                  className={`flex items-center gap-3 px-4 py-3.5 rounded-xl border transition-colors ${
-                    log ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'
-                  }`}
+            {openChores.map(chore => (
+              <div
+                key={chore.id}
+                className="flex items-center gap-3 px-4 py-3.5 rounded-xl border bg-white border-gray-200"
+              >
+                <button
+                  onClick={() => markDone(chore)}
+                  disabled={closing === chore.id}
+                  className="flex-shrink-0 disabled:opacity-50"
                 >
-                  <button onClick={() => toggleDone(chore)} className="flex-shrink-0">
-                    {log
-                      ? <CheckCircle2 className="h-5 w-5 text-green-500" />
-                      : <Circle className="h-5 w-5 text-gray-300 hover:text-blue-400 transition-colors" />
-                    }
-                  </button>
-                  <span className="text-sm mr-0.5">{chore.emoji}</span>
-                  <span className={`flex-1 text-sm font-medium ${log ? 'text-green-700 line-through' : 'text-gray-900'}`}>
-                    {chore.title}
-                  </span>
-                  {log && (
-                    <span className="text-xs text-green-600 font-medium flex-shrink-0">
-                      {memberName(log.done_by)}
-                    </span>
-                  )}
-                </div>
-              )
-            })}
+                  <Circle className="h-5 w-5 text-gray-300 hover:text-green-400 transition-colors" />
+                </button>
+                <span className="text-sm">{chore.emoji}</span>
+                <span className="flex-1 text-sm font-medium text-gray-900">{chore.title}</span>
+                <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full flex-shrink-0">
+                  +{chore.points} pts
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </section>
 
-      {/* All Chores */}
+      {/* All Chores (management) */}
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">All Chores</h2>
@@ -209,7 +302,7 @@ export default function ChoresPage() {
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="Emoji (optional)"
+                placeholder="Emoji"
                 value={newEmoji}
                 onChange={e => setNewEmoji(e.target.value)}
                 maxLength={2}
@@ -248,6 +341,18 @@ export default function ChoresPage() {
                 </button>
               ))}
             </div>
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-gray-500 flex-shrink-0">Points</label>
+              <input
+                type="number"
+                min={1}
+                max={999}
+                value={newPoints}
+                onChange={e => setNewPoints(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-20 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-center focus:border-blue-400 focus:outline-none"
+              />
+              <span className="text-xs text-gray-400">auto-suggested, override freely</span>
+            </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowForm(false)} className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700">
                 Cancel
@@ -272,6 +377,7 @@ export default function ChoresPage() {
             <div key={chore.id} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white border border-gray-100">
               <span className="text-sm w-5 text-center">{chore.emoji ?? '•'}</span>
               <span className="flex-1 text-sm text-gray-800">{chore.title}</span>
+              <span className="text-xs font-medium text-amber-600">{chore.points} pts</span>
               <span className="text-xs text-gray-400 flex-shrink-0">
                 {chore.recurrence === 'daily' ? 'Daily' : `Every ${DAYS[chore.day_of_week ?? 1]}`}
               </span>
@@ -285,6 +391,48 @@ export default function ChoresPage() {
           ))}
         </div>
       </section>
+
+      {/* Monthly Leaderboard */}
+      {leaderboard.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Trophy className="h-4 w-4 text-amber-500" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Leaderboard</h2>
+          </div>
+          <div className="space-y-3">
+            {leaderboard.map(({ month, label, winner, max, sorted }) => (
+              <div key={month} className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-700">{label}</span>
+                  {winner && (
+                    <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-100 px-2.5 py-0.5 rounded-full">
+                      👑 {memberName(winner)}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {sorted.map(([userId, pts]) => (
+                    <div key={userId} className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 w-16 truncate flex-shrink-0">
+                        {memberName(userId)}
+                      </span>
+                      <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{ width: `${(pts / max) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-semibold text-gray-700 w-14 text-right flex-shrink-0">
+                        {pts} pts
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

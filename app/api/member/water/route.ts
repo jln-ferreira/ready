@@ -8,7 +8,21 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
-import { format, subDays } from 'date-fns'
+import { format, subDays, differenceInDays, parseISO } from 'date-fns'
+
+function computeWaterStreak(dates: string[]): number {
+  const unique = [...new Set(dates)].sort().reverse()
+  if (!unique.length) return 0
+  const today     = format(new Date(), 'yyyy-MM-dd')
+  const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
+  if (unique[0] !== today && unique[0] !== yesterday) return 0
+  let streak = 1
+  for (let i = 1; i < unique.length; i++) {
+    if (differenceInDays(parseISO(unique[i - 1]), parseISO(unique[i])) === 1) streak++
+    else break
+  }
+  return streak
+}
 
 async function getCallerAndVerify(memberId: string) {
   const cookieStore = await cookies()
@@ -66,19 +80,30 @@ export async function GET(req: NextRequest) {
   if ('error' in result) return NextResponse.json({ error: result.error }, { status: result.status })
   const { admin } = result
 
-  const from = format(subDays(new Date(date), 6), 'yyyy-MM-dd')
+  const from      = format(subDays(new Date(date), 6), 'yyyy-MM-dd')
+  const since60   = format(subDays(new Date(), 60), 'yyyy-MM-dd')
 
-  const [{ data: dayLog }, { data: historyData }] = await Promise.all([
+  const [{ data: dayLog }, { data: historyData }, { data: streakData }] = await Promise.all([
     admin.from('water_logs').select('amount_ml').eq('user_id', memberId).eq('log_date', date).single(),
     admin.from('water_logs')
       .select('log_date, amount_ml')
       .eq('user_id', memberId)
       .gte('log_date', from)
       .lte('log_date', date),
+    admin.from('water_logs')
+      .select('log_date')
+      .eq('user_id', memberId)
+      .gte('log_date', since60)
+      .gt('amount_ml', 0),
   ])
+
+  const waterStreak = computeWaterStreak(
+    (streakData ?? []).map((r: { log_date: string }) => r.log_date)
+  )
 
   return NextResponse.json({
     day_amount_ml: dayLog?.amount_ml ?? 0,
+    water_streak:  waterStreak,
     history: (historyData ?? []).map((r: { log_date: string; amount_ml: number }) => ({
       date: r.log_date,
       amount_ml: r.amount_ml,

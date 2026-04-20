@@ -13,10 +13,12 @@ import {
   isSameDay,
   addMonths,
   subMonths,
+  getYear,
 } from 'date-fns'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import type { CalendarEvent } from '@/types/calendar'
 import { CATEGORY_COLORS } from '@/types/calendar'
+import { getBCHolidays } from '@/lib/bcHolidays'
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const WEEK_DAYS_SHORT = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
@@ -32,6 +34,8 @@ interface Props {
 
 export function CalendarGrid({ events, currentMonth, onMonthChange, onAddEvent, onSelectEvent }: Props) {
   const [selectedDay, setSelectedDay] = useState<Date | null>(null)
+
+  const bcHolidays = useMemo(() => getBCHolidays(getYear(currentMonth)), [currentMonth])
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 0 })
@@ -96,14 +100,20 @@ export function CalendarGrid({ events, currentMonth, onMonthChange, onAddEvent, 
           </div>
         </div>
 
-        <button
-          onClick={() => onAddEvent(selectedDay ?? undefined)}
-          className="flex items-center gap-1.5 px-3 py-2 sm:px-4 bg-blue-600 text-white text-xs sm:text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
-        >
-          <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-          <span className="hidden sm:inline">Add Event</span>
-          <span className="sm:hidden">Add</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <span className="hidden sm:flex items-center gap-1.5 text-xs text-gray-400">
+            <span className="h-2.5 w-2.5 rounded-sm bg-red-100 border border-red-200 flex-shrink-0" />
+            BC Holiday
+          </span>
+          <button
+            onClick={() => onAddEvent(selectedDay ?? undefined)}
+            className="flex items-center gap-1.5 px-3 py-2 sm:px-4 bg-blue-600 text-white text-xs sm:text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+          >
+            <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline">Add Event</span>
+            <span className="sm:hidden">Add</span>
+          </button>
+        </div>
       </div>
 
       {/* ── Day-of-week headers ── */}
@@ -125,6 +135,7 @@ export function CalendarGrid({ events, currentMonth, onMonthChange, onAddEvent, 
           const today = isToday(day)
           const isSelected = selectedDay ? isSameDay(day, selectedDay) : false
           const overflow = dayEvents.length - MAX_PER_CELL
+          const holiday = bcHolidays.get(key)
 
           return (
             <div
@@ -135,14 +146,19 @@ export function CalendarGrid({ events, currentMonth, onMonthChange, onAddEvent, 
                 ${inMonth
                   ? isSelected
                     ? 'bg-blue-50/70'
-                    : 'bg-white hover:bg-gray-50/80'
+                    : holiday
+                      ? 'bg-red-50/40 hover:bg-red-50/70'
+                      : 'bg-white hover:bg-gray-50/80'
                   : 'bg-gray-50/50'
                 }
               `}
             >
-              {/* Day number */}
-              <div className="flex justify-end p-1 sm:p-1.5">
-                <span className={`h-6 w-6 sm:h-7 sm:w-7 flex items-center justify-center rounded-full text-xs sm:text-sm font-medium ${
+              {/* Day number + holiday name */}
+              <div className="flex items-start justify-between p-1 sm:p-1.5 gap-0.5">
+                <span className="hidden sm:block text-[9px] font-medium text-red-500 leading-tight mt-0.5 truncate flex-1 min-w-0">
+                  {holiday ?? ''}
+                </span>
+                <span className={`h-6 w-6 sm:h-7 sm:w-7 flex items-center justify-center rounded-full text-xs sm:text-sm font-medium flex-shrink-0 ${
                   today ? 'bg-blue-600 text-white'
                   : isSelected ? 'bg-blue-100 text-blue-700'
                   : inMonth ? 'text-gray-900'
@@ -151,6 +167,12 @@ export function CalendarGrid({ events, currentMonth, onMonthChange, onAddEvent, 
                   {format(day, 'd')}
                 </span>
               </div>
+              {/* Mobile: holiday dot */}
+              {holiday && inMonth && (
+                <div className="sm:hidden flex justify-center pb-0.5">
+                  <span className="h-1 w-1 rounded-full bg-red-400" />
+                </div>
+              )}
 
               {/* Desktop: full event pills */}
               <div className="hidden sm:block px-1 pb-1 space-y-0.5">
@@ -198,9 +220,16 @@ export function CalendarGrid({ events, currentMonth, onMonthChange, onAddEvent, 
       {selectedDay && (
         <div className="sm:hidden mt-4 flex-1 overflow-y-auto">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-gray-900">
-              {format(selectedDay, 'EEEE, MMMM d')}
-            </h3>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">
+                {format(selectedDay, 'EEEE, MMMM d')}
+              </h3>
+              {bcHolidays.get(format(selectedDay, 'yyyy-MM-dd')) && (
+                <p className="text-xs text-red-500 font-medium">
+                  {bcHolidays.get(format(selectedDay, 'yyyy-MM-dd'))}
+                </p>
+              )}
+            </div>
             <button
               onClick={() => setSelectedDay(null)}
               className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors"

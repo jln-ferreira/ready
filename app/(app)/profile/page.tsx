@@ -1,9 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { User, Lock, Palette, KeyRound } from 'lucide-react'
+import { User, Lock, Palette, KeyRound, Bell, BellOff, Moon, Plus } from 'lucide-react'
 import { useActiveMembers } from '@/contexts/ActiveMemberContext'
+import { useHousehold } from '@/hooks/useHousehold'
+import { useStreakAndBadges } from '@/hooks/useStreakAndBadges'
+import { useStreakFavicon } from '@/hooks/useStreakFavicon'
+import { usePushNotifications } from '@/hooks/usePushNotifications'
+import { KidModal, DeleteKidConfirm, KidRow } from '@/components/KidModal'
+import type { Kid } from '@/components/KidModal'
 
 // ─── colour palette ───────────────────────────────────────────────────────────
 export const SIDEBAR_COLORS: Record<string, { label: string; hex: string }> = {
@@ -64,11 +70,107 @@ const blankFitness: FitnessProfile = {
 export default function ProfilePage() {
   const supabase = createClient()
   const { accountType, activeMemberId, activeMember, updateMemberColor } = useActiveMembers()
+  const { household } = useHousehold()
 
   // When the family account has a member selected, edit that member's profile
   const isMemberView    = accountType === 'family' && !!activeMemberId
   const lockedToFamily  = accountType === 'family' && !activeMemberId
   const targetUserId    = activeMemberId   // null when not in member view
+
+  const [ownUserId, setOwnUserId] = useState<string | null>(null)
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => setOwnUserId(user?.id ?? null))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Always use ownUserId in the hook for personal streak + badges
+  const { streak: ownStreak, longestStreak: ownLongestStreak, badges, loading: streakLoading } =
+    useStreakAndBadges(ownUserId, household?.id)
+
+  // When viewing a member, fetch their streak via service-role API (bypasses RLS)
+  const [memberStreak, setMemberStreak] = useState<{ current: number; longest: number } | null>(null)
+  const [memberStreakLoading, setMemberStreakLoading] = useState(false)
+  useEffect(() => {
+    if (!isMemberView || !targetUserId) { setMemberStreak(null); return }
+    let cancelled = false
+    setMemberStreakLoading(true)
+    fetch(`/api/member/streak?memberId=${targetUserId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(json => { if (!cancelled && json) setMemberStreak({ current: json.current, longest: json.longest }) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setMemberStreakLoading(false) })
+    return () => { cancelled = true }
+  }, [isMemberView, targetUserId])
+
+  const streak        = isMemberView ? (memberStreak?.current  ?? 0) : ownStreak
+  const longestStreak = isMemberView ? (memberStreak?.longest  ?? 0) : ownLongestStreak
+
+  // Update favicon based on own streak (not the member being viewed)
+  useStreakFavicon(ownStreak)
+
+  // Household comparison chips — family account uses service-role API to read member activity
+  type HouseholdStreakEntry = { userId: string; name: string; color: string; streak: number; longestStreak: number }
+  const [householdStreaks, setHouseholdStreaks] = useState<HouseholdStreakEntry[]>([])
+  const [householdStreaksLoading, setHouseholdStreaksLoading] = useState(false)
+  useEffect(() => {
+    if (!household?.id) return
+    // Family account: fetch via service-role API so RLS doesn't block reading member activity
+    if (accountType === 'family') {
+      let cancelled = false
+      setHouseholdStreaksLoading(true)
+      fetch(`/api/household/streaks?householdId=${household.id}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(json => { if (!cancelled) setHouseholdStreaks(json) })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setHouseholdStreaksLoading(false) })
+      return () => { cancelled = true }
+    }
+  }, [accountType, household?.id])
+
+  const isStreakLoading = streakLoading || (isMemberView && memberStreakLoading) || householdStreaksLoading
+
+  // Push notifications — only for the current user's own profile
+  const push = usePushNotifications(household?.id)
+
+  // Kids management
+  const [kids,        setKids]        = useState<Kid[]>([])
+  const [kidsLoading, setKidsLoading] = useState(false)
+  const [kidModal,    setKidModal]    = useState<Partial<Kid> | null>(null)
+  const [modalSaving, setModalSaving] = useState(false)
+  const [deleteKid,   setDeleteKid]   = useState<Kid | null>(null)
+  const [deletingKid, setDeletingKid] = useState(false)
+
+  const loadKids = useCallback(async () => {
+    if (!household?.id) return
+    setKidsLoading(true)
+    const { data } = await supabase.from('kids').select('*').eq('household_id', household.id).order('created_at', { ascending: true })
+    setKids((data ?? []) as Kid[])
+    setKidsLoading(false)
+  }, [household?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadKids() }, [loadKids])
+
+  const handleSaveKid = async (data: { name: string; date_of_birth: string | null; daily_sleep_goal_min: number }) => {
+    if (!household?.id) return
+    setModalSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (kidModal?.id) {
+      await supabase.from('kids').update(data).eq('id', kidModal.id)
+    } else {
+      await supabase.from('kids').insert({ ...data, household_id: household.id, created_by: user?.id ?? null })
+    }
+    setKidModal(null)
+    setModalSaving(false)
+    await loadKids()
+  }
+
+  const handleDeleteKid = async () => {
+    if (!deleteKid) return
+    setDeletingKid(true)
+    await supabase.from('kids').delete().eq('id', deleteKid.id)
+    setDeleteKid(null)
+    setDeletingKid(false)
+    await loadKids()
+  }
 
   // Seed display name and color from context immediately — API fetch will overwrite with fresh data
   const [displayName,  setDisplayName]  = useState(activeMember?.display_name ?? '')
@@ -208,25 +310,31 @@ export default function ProfilePage() {
 
   const handleSavePin = async () => {
     setPinError(null)
-    if (!/^\d{4}$/.test(newPin))    { setPinError('PIN must be exactly 4 digits.'); return }
-    if (newPin !== confirmPin)       { setPinError('PINs do not match.'); return }
+    if (!/^\d{4}$/.test(newPin)) { setPinError('PIN must be exactly 4 digits.'); return }
+    if (newPin !== confirmPin)   { setPinError('PINs do not match.'); return }
 
     setPinSaving(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setPinSaving(false); return }
 
     const targetId = (isMemberView && targetUserId) ? targetUserId : user.id
-    const { error } = await supabase.rpc('set_member_pin', { p_user_id: targetId, p_pin: newPin })
 
-    if (error) {
-      setPinError('Could not save PIN. Please try again.')
+    const res = await fetch('/api/member/pin', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ targetUserId: targetId, pin: newPin }),
+    })
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      setPinError(json.error ?? 'Could not save PIN. Please try again.')
     } else {
       setHasPin(true)
       setPinFormOpen(false)
       setNewPin('')
       setConfirmPin('')
       setPinSaved(true)
-      setTimeout(() => setPinSaved(false), 2000)
+      setTimeout(() => setPinSaved(false), 3000)
     }
     setPinSaving(false)
   }
@@ -249,6 +357,16 @@ export default function ProfilePage() {
   return (
     <div className="max-w-lg mx-auto px-4 md:px-6 py-8 space-y-6">
 
+      {/* PIN saved toast */}
+      {pinSaved && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 rounded-2xl bg-green-600 px-5 py-3 text-sm font-medium text-white shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
+          <svg className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+          PIN updated successfully
+        </div>
+      )}
+
       {/* Header */}
       <div>
         <div className="flex items-center gap-2 mb-1">
@@ -262,6 +380,40 @@ export default function ProfilePage() {
           Private — only visible to you
         </p>
       </div>
+
+      {/* Streak card — only shown once the user has a streak worth celebrating */}
+      {!isStreakLoading && streak >= 1 && (
+        <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🔥</span>
+              <div>
+                <p className="text-2xl font-bold text-orange-700 leading-none">{streak}</p>
+                <p className="text-xs text-orange-400 mt-0.5">
+                  day login streak
+                  {longestStreak > streak && longestStreak > 0 && ` · best: ${longestStreak}`}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Household streak comparison — exclude the member currently being viewed */}
+          {householdStreaks.filter(m => !isMemberView || m.userId !== targetUserId).length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1 border-t border-orange-100">
+              {householdStreaks.filter(m => !isMemberView || m.userId !== targetUserId).map(m => (
+                <div key={m.userId} className="flex items-center gap-1.5">
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: m.color }}
+                  />
+                  <span className="text-xs text-gray-600 font-medium">{m.name}</span>
+                  <span className="text-xs font-bold text-orange-600">{m.streak}🔥</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Identity */}
       <div className="rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 overflow-hidden">
@@ -357,9 +509,6 @@ export default function ProfilePage() {
             {pinError && (
               <p className="text-xs text-red-600">{pinError}</p>
             )}
-            {pinSaved && (
-              <p className="text-xs text-green-600">PIN saved ✓</p>
-            )}
             <div className="flex gap-2">
               <button
                 onClick={handleSavePin}
@@ -378,6 +527,46 @@ export default function ProfilePage() {
           </div>
         )}
       </div>
+
+      {/* Push notifications — own profile only */}
+      {!isMemberView && push.isSupported && push.permission !== 'denied' && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            {push.isSubscribed
+              ? <Bell className="h-4 w-4 text-blue-500" />
+              : <BellOff className="h-4 w-4 text-gray-400" />
+            }
+            <p className="text-sm font-medium text-gray-700">Smart Nudges</p>
+            <span className={`ml-auto text-xs font-medium px-2 py-0.5 rounded-full ${
+              push.isSubscribed ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+            }`}>
+              {push.isSubscribed ? 'On' : 'Off'}
+            </span>
+          </div>
+          <button
+            onClick={push.isSubscribed ? push.unsubscribe : push.subscribe}
+            disabled={push.loading}
+            className={`w-full rounded-xl border px-4 py-2.5 text-sm text-left transition-colors disabled:opacity-50 ${
+              push.isSubscribed
+                ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            {push.loading
+              ? 'Working…'
+              : push.isSubscribed
+                ? 'Disable — streak alerts, point reminders, overdue chores'
+                : 'Enable — get nudged before losing a streak or falling behind'}
+          </button>
+        </div>
+      )}
+
+      {!isMemberView && push.isSupported && push.permission === 'denied' && (
+        <p className="text-xs text-gray-400 flex items-center gap-1.5">
+          <BellOff className="h-3.5 w-3.5" />
+          Notifications blocked in browser settings — enable them there to use smart nudges.
+        </p>
+      )}
 
       {/* Divider */}
       <div className="border-t border-gray-100 pt-2">
@@ -506,6 +695,75 @@ export default function ProfilePage() {
         )}
       </div>
 
+      {/* Achievements */}
+      {!isStreakLoading && (
+        <div>
+          <div className="border-t border-gray-100 pt-2 mb-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Achievements</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {badges.map(badge => (
+              <div
+                key={badge.id}
+                title={badge.desc}
+                className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-3 text-center transition-colors ${
+                  badge.earned
+                    ? 'border-amber-200 bg-amber-50'
+                    : 'border-gray-100 bg-gray-50 opacity-40'
+                }`}
+              >
+                <span className="text-2xl leading-none">{badge.emoji}</span>
+                <span className={`text-xs font-semibold leading-tight ${badge.earned ? 'text-amber-800' : 'text-gray-400'}`}>
+                  {badge.name}
+                </span>
+                {!badge.earned && (
+                  <span className="text-[10px] text-gray-400 leading-tight">{badge.desc}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Kids */}
+      {household?.id && (
+        <div>
+          <div className="border-t border-gray-100 pt-2 flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+              <Moon className="h-3.5 w-3.5" />
+              Crianças
+            </p>
+            <button
+              onClick={() => setKidModal({})}
+              className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" /> Adicionar
+            </button>
+          </div>
+          {kidsLoading ? (
+            <div className="h-12 animate-pulse bg-gray-100 rounded-xl" />
+          ) : kids.length === 0 ? (
+            <button
+              onClick={() => setKidModal({})}
+              className="w-full py-3 rounded-xl border border-dashed border-gray-200 text-sm text-gray-400 hover:border-blue-300 hover:text-blue-500 transition-colors"
+            >
+              Nenhuma criança cadastrada — toque para adicionar
+            </button>
+          ) : (
+            <div className="space-y-2">
+              {kids.map(kid => (
+                <KidRow
+                  key={kid.id}
+                  kid={kid}
+                  onEdit={k => setKidModal(k)}
+                  onDelete={k => setDeleteKid(k)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {loadError && (
         <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           Could not load profile: {loadError}
@@ -530,6 +788,14 @@ export default function ProfilePage() {
       >
         {saving ? 'Saving…' : saved ? 'Saved ✓' : 'Save Profile'}
       </button>
+
+      {/* Kid modals */}
+      {kidModal !== null && (
+        <KidModal initial={kidModal} onSave={handleSaveKid} onCancel={() => setKidModal(null)} saving={modalSaving} />
+      )}
+      {deleteKid && (
+        <DeleteKidConfirm kid={deleteKid} onDelete={handleDeleteKid} onCancel={() => setDeleteKid(null)} deleting={deletingKid} />
+      )}
     </div>
   )
 }

@@ -7,6 +7,7 @@ import { useCalendarEvents } from '@/hooks/useCalendarEvents'
 import { useHousehold } from '@/hooks/useHousehold'
 import type { CalendarEvent, EventInput } from '@/types/calendar'
 import { Link2, Check } from 'lucide-react'
+import { ImportedEventsList } from '@/components/calendar/ImportedEventsList'
 
 type ModalState =
   | { type: 'closed' }
@@ -84,6 +85,11 @@ export default function HomePage() {
           </button>
         </div>
       )}
+
+      <ImportedEventsList
+        existingEvents={events}
+        createEvent={createEvent}
+      />
 
       {modal.type !== 'closed' && (
         <EventModal

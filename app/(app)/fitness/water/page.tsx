@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { format, subDays, addDays, isToday, parseISO } from 'date-fns'
+import { format, subDays, addDays, isToday, parseISO, differenceInDays } from 'date-fns'
 import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
 import { useActiveMembers } from '@/contexts/ActiveMemberContext'
@@ -55,6 +55,7 @@ export default function WaterIntakePage() {
   // The logged-in user's own ID — loaded once from auth, used as bootstrap trigger
   const [currentUserId, setCurrentUserId]   = useState<string | null>(null)
   const [loading, setLoading]               = useState(true)
+  const [waterStreak, setWaterStreak]       = useState(0)
   const [adding, setAdding]                 = useState(false)
   const [addError, setAddError]             = useState<string | null>(null)
   const [customMl, setCustomMl]             = useState('')
@@ -175,20 +176,34 @@ export default function WaterIntakePage() {
       if (res.ok) {
         const json = await res.json()
         setHistory(json.history ?? [])
+        setWaterStreak(json.water_streak ?? 0)
       }
     } else {
-      const { data } = await supabase
-        .from('water_logs')
-        .select('log_date, amount_ml')
-        .eq('user_id', uid)
-        .gte('log_date', from)
-        .lte('log_date', to)
+      const since60 = format(subDays(new Date(), 60), 'yyyy-MM-dd')
+      const [{ data: recent }, { data: streakData }] = await Promise.all([
+        supabase.from('water_logs').select('log_date, amount_ml').eq('user_id', uid).gte('log_date', from).lte('log_date', to),
+        supabase.from('water_logs').select('log_date').eq('user_id', uid).gte('log_date', since60).gt('amount_ml', 0),
+      ])
       setHistory(
-        ((data ?? []) as { log_date: string; amount_ml: number }[]).map(r => ({
+        ((recent ?? []) as { log_date: string; amount_ml: number }[]).map(r => ({
           date: r.log_date,
           amount_ml: r.amount_ml,
         }))
       )
+      // Compute water streak from last 60 days
+      const dates = [...new Set((streakData ?? []).map((r: { log_date: string }) => r.log_date))].sort().reverse()
+      const today     = todayStr()
+      const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
+      if (!dates.length || (dates[0] !== today && dates[0] !== yesterday)) {
+        setWaterStreak(0)
+      } else {
+        let s = 1
+        for (let i = 1; i < dates.length; i++) {
+          if (differenceInDays(parseISO(dates[i - 1]), parseISO(dates[i])) === 1) s++
+          else break
+        }
+        setWaterStreak(s)
+      }
     }
   }
 
@@ -259,6 +274,11 @@ export default function WaterIntakePage() {
         <div className="flex items-center gap-2">
           <Droplets className="h-5 w-5 text-blue-500" />
           <h1 className="text-xl font-semibold text-gray-900">{pageTitle}</h1>
+          {waterStreak > 0 && !lockedToFamily && (
+            <span className="text-sm font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-full">
+              💧 {waterStreak}-day streak
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <button onClick={goToPrev} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 transition-colors">

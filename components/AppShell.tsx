@@ -5,12 +5,18 @@ import { Menu } from 'lucide-react'
 import Sidebar from './Sidebar'
 import { AppLogo } from './AppLogo'
 import { ActiveMemberProvider } from '@/contexts/ActiveMemberContext'
+import ActivityTracker from './ActivityTracker'
+import { restoreStreakFavicon } from '@/hooks/useStreakFavicon'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
 
+  // Restore streak favicon from localStorage on every page load
+  useState(() => { restoreStreakFavicon() })
+
   return (
     <ActiveMemberProvider>
+      <ActivityTracker />
       <div className="flex h-full">
         {/* Mobile backdrop */}
         {open && (
