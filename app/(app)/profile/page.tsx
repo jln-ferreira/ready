@@ -70,7 +70,7 @@ const blankFitness: FitnessProfile = {
 export default function ProfilePage() {
   const supabase = createClient()
   const { accountType, activeMemberId, activeMember, updateMemberColor } = useActiveMembers()
-  const { household } = useHousehold()
+  const { household, loading: householdLoading } = useHousehold()
 
   // When the family account has a member selected, edit that member's profile
   const isMemberView    = accountType === 'family' && !!activeMemberId
@@ -82,9 +82,10 @@ export default function ProfilePage() {
     supabase.auth.getUser().then(({ data: { user } }) => setOwnUserId(user?.id ?? null))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Always use ownUserId in the hook for personal streak + badges
+  // Badges are per-member: use the viewed member's ID when in member view
+  const badgeUserId = isMemberView && targetUserId ? targetUserId : ownUserId
   const { streak: ownStreak, longestStreak: ownLongestStreak, badges, loading: streakLoading } =
-    useStreakAndBadges(ownUserId, household?.id)
+    useStreakAndBadges(badgeUserId, household?.id)
 
   // When viewing a member, fetch their streak via service-role API (bypasses RLS)
   const [memberStreak, setMemberStreak] = useState<{ current: number; longest: number } | null>(null)
@@ -126,7 +127,7 @@ export default function ProfilePage() {
     }
   }, [accountType, household?.id])
 
-  const isStreakLoading = streakLoading || (isMemberView && memberStreakLoading) || householdStreaksLoading
+  const isStreakLoading = householdLoading || !ownUserId || streakLoading || (isMemberView && memberStreakLoading) || householdStreaksLoading
 
   // Push notifications — only for the current user's own profile
   const push = usePushNotifications(household?.id)
@@ -695,8 +696,8 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {/* Achievements */}
-      {!isStreakLoading && (
+      {/* Achievements — shown for individual accounts and when viewing a member */}
+      {!isStreakLoading && (accountType === 'individual' || isMemberView) && (
         <div>
           <div className="border-t border-gray-100 pt-2 mb-4">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Achievements</p>
@@ -716,9 +717,9 @@ export default function ProfilePage() {
                 <span className={`text-xs font-semibold leading-tight ${badge.earned ? 'text-amber-800' : 'text-gray-400'}`}>
                   {badge.name}
                 </span>
-                {!badge.earned && (
-                  <span className="text-[10px] text-gray-400 leading-tight">{badge.desc}</span>
-                )}
+                <span className={`text-[10px] leading-tight ${badge.earned ? 'text-amber-600' : 'text-gray-400'}`}>
+                  {badge.desc}
+                </span>
               </div>
             ))}
           </div>

@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { format, subMonths, parseISO, differenceInDays, subDays } from 'date-fns'
 import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
+import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 import { ListChecks, Plus, Trash2, Circle, Trophy } from 'lucide-react'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -21,7 +22,7 @@ interface Chore {
 
 interface ChoreLog {
   id: string
-  chore_id: string
+  chore_id: string | null
   done_by: string
   done_date: string
   points_earned: number | null
@@ -55,6 +56,8 @@ function isChoreOpen(chore: Chore, logs: ChoreLog[]): boolean {
 
 export default function ChoresPage() {
   const { household, loading: householdLoading } = useHousehold()
+  const { effectiveUserId, accountType, activeMemberId } = useActiveMembers()
+  const isReadOnly = accountType === 'family' && !activeMemberId
   const supabase = createClient()
 
   const [chores, setChores] = useState<Chore[]>([])
@@ -113,26 +116,37 @@ export default function ChoresPage() {
   }
 
   async function markDone(chore: Chore) {
-    if (!currentUserId || closing) return
+    // Use effectiveUserId (member when family+member selected) or fall back to the page-level user
+    const doneBy = effectiveUserId ?? currentUserId
+    if (!doneBy || closing) return
     setClosing(chore.id)
-    const today = format(new Date(), 'yyyy-MM-dd')
-    const { data, error } = await supabase
+    const today  = format(new Date(), 'yyyy-MM-dd')
+    const points = chore.points ?? 10
+
+    // Try insert first; if unique conflict (same chore already done today) fall back to update
+    let logData: ChoreLog | null = null
+    const { data: insertData, error: insertErr } = await supabase
       .from('chore_logs')
-      .upsert(
-        {
-          chore_id: chore.id,
-          household_id: household!.id,
-          done_by: currentUserId,
-          done_date: today,
-          points_earned: chore.points,
-        },
-        { onConflict: 'chore_id,done_date' }
-      )
+      .insert({ chore_id: chore.id, household_id: household!.id, done_by: doneBy, done_date: today, points_earned: points })
       .select()
       .single()
 
-    if (!error && data) {
-      setLogs(prev => [data as ChoreLog, ...prev.filter(l => !(l.chore_id === chore.id && l.done_date === today))])
+    if (!insertErr && insertData) {
+      logData = { ...(insertData as ChoreLog), points_earned: points }
+    } else if (insertErr?.code === '23505') {
+      // Unique conflict — update the existing row for today
+      const { data: updateData } = await supabase
+        .from('chore_logs')
+        .update({ done_by: doneBy, points_earned: points })
+        .eq('chore_id', chore.id)
+        .eq('done_date', today)
+        .select()
+        .single()
+      if (updateData) logData = { ...(updateData as ChoreLog), points_earned: points }
+    }
+
+    if (logData) {
+      setLogs(prev => [logData!, ...prev.filter(l => !(l.chore_id === chore.id && l.done_date === today))])
       window.dispatchEvent(new Event('chore-toggled'))
     }
     setClosing(null)
@@ -165,7 +179,8 @@ export default function ChoresPage() {
     const { error } = await supabase.from('chores').delete().eq('id', id)
     if (!error) {
       setChores(prev => prev.filter(c => c.id !== id))
-      setLogs(prev => prev.filter(l => l.chore_id !== id))
+      // Keep logs in local state — historical points must survive chore deletion
+      // (DB now uses ON DELETE SET NULL via preserve_chore_log_history.sql migration)
       window.dispatchEvent(new Event('chore-toggled'))
     }
   }
@@ -201,9 +216,11 @@ export default function ChoresPage() {
 
   // Monthly leaderboard: last 6 months with data, sorted newest first
   const leaderboard = useMemo(() => {
+    const adminId = accountType === 'family' ? currentUserId : null
     const monthMap: Record<string, Record<string, number>> = {}
     for (const log of logs) {
-      if (!log.points_earned) continue
+      if (log.points_earned == null) continue
+      if (adminId && log.done_by === adminId) continue
       const month = log.done_date.slice(0, 7)
       if (!monthMap[month]) monthMap[month] = {}
       monthMap[month][log.done_by] = (monthMap[month][log.done_by] ?? 0) + log.points_earned
@@ -228,7 +245,7 @@ export default function ChoresPage() {
           sorted,
         }
       })
-  }, [logs])
+  }, [logs, accountType, currentUserId])
 
   if (householdLoading) return <Spinner />
 
@@ -268,8 +285,8 @@ export default function ChoresPage() {
               >
                 <button
                   onClick={() => markDone(chore)}
-                  disabled={closing === chore.id}
-                  className="flex-shrink-0 disabled:opacity-50"
+                  disabled={isReadOnly || closing === chore.id}
+                  className="flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   <Circle className="h-5 w-5 text-gray-300 hover:text-green-400 transition-colors" />
                 </button>
@@ -288,13 +305,15 @@ export default function ChoresPage() {
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">All Chores</h2>
-          <button
-            onClick={() => setShowForm(v => !v)}
-            className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add Chore
-          </button>
+          {!isReadOnly && (
+            <button
+              onClick={() => setShowForm(v => !v)}
+              className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Chore
+            </button>
+          )}
         </div>
 
         {showForm && (
@@ -381,12 +400,14 @@ export default function ChoresPage() {
               <span className="text-xs text-gray-400 flex-shrink-0">
                 {chore.recurrence === 'daily' ? 'Daily' : `Every ${DAYS[chore.day_of_week ?? 1]}`}
               </span>
-              <button
-                onClick={() => deleteChore(chore.id)}
-                className="p-1 text-gray-300 hover:text-red-400 transition-colors"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {!isReadOnly && (
+                <button
+                  onClick={() => deleteChore(chore.id)}
+                  className="p-1 text-gray-300 hover:text-red-400 transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           ))}
         </div>

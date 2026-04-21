@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { format, subMonths, parseISO } from 'date-fns'
 import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
-import { ShoppingCart, Plus, Trash2 } from 'lucide-react'
+import { useActiveMembers } from '@/contexts/ActiveMemberContext'
+import { ShoppingCart, Plus, Trash2, Trophy } from 'lucide-react'
 
 const CATEGORIES = ['Produce', 'Dairy', 'Meat', 'Bakery', 'Pantry', 'Other'] as const
 type Category = typeof CATEGORIES[number]
@@ -29,15 +31,35 @@ interface ShoppingItem {
   created_at: string
 }
 
+interface ShoppingLog {
+  user_id: string
+  points: number
+  log_date: string  // yyyy-MM-dd
+}
+
+interface MemberProfile {
+  user_id: string
+  email: string
+  display_name?: string
+}
+
+const PTS_ADD   = 3   // adding an item
+const PTS_CHECK = 5   // checking one off
+
 export default function ShoppingPage() {
   const { household, loading: householdLoading } = useHousehold()
+  const { accountType, activeMemberId, effectiveUserId } = useActiveMembers()
+  const isReadOnly = accountType === 'family' && !activeMemberId
   const supabase = createClient()
 
-  const [items, setItems] = useState<ShoppingItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [title, setTitle] = useState('')
-  const [category, setCategory] = useState<Category>('Other')
-  const [adding, setAdding] = useState(false)
+  const [items,         setItems]         = useState<ShoppingItem[]>([])
+  const [loading,       setLoading]       = useState(true)
+  const [title,         setTitle]         = useState('')
+  const [category,      setCategory]      = useState<Category>('Other')
+  const [adding,        setAdding]        = useState(false)
+  const [members,       setMembers]       = useState<MemberProfile[]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [shoppingLogs,  setShoppingLogs]  = useState<ShoppingLog[]>([])
 
   useEffect(() => {
     if (!household) return
@@ -46,37 +68,88 @@ export default function ShoppingPage() {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase
-      .from('shopping_items')
-      .select('*')
-      .eq('household_id', household!.id)
-      .order('checked', { ascending: true })
-      .order('created_at', { ascending: false })
-    setItems((data as ShoppingItem[]) ?? [])
+    const { data: { user } } = await supabase.auth.getUser()
+    setCurrentUserId(user?.id ?? null)
+
+    const since = format(subMonths(new Date(), 6), 'yyyy-MM-dd')
+
+    const [itemsRes, logsRes] = await Promise.all([
+      supabase
+        .from('shopping_items')
+        .select('*')
+        .eq('household_id', household!.id)
+        .order('checked', { ascending: true })
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('shopping_logs')
+        .select('user_id, points, log_date')
+        .eq('household_id', household!.id)
+        .gte('log_date', since),
+    ])
+
+    const { data: profileData, error: profileErr } = await supabase.rpc('get_household_members_with_profiles')
+    let memberData: MemberProfile[]
+    if (!profileErr && profileData) {
+      memberData = profileData as MemberProfile[]
+    } else {
+      const { data: basicData } = await supabase.rpc('get_household_members')
+      memberData = (basicData ?? []) as MemberProfile[]
+    }
+
+    setItems((itemsRes.data as ShoppingItem[]) ?? [])
+    setShoppingLogs((logsRes.data as ShoppingLog[]) ?? [])
+    setMembers(memberData)
     setLoading(false)
+  }
+
+  function actorId(): string | null {
+    return effectiveUserId ?? currentUserId
+  }
+
+  async function writeLog(action: 'added' | 'checked', userId: string) {
+    const points = action === 'added' ? PTS_ADD : PTS_CHECK
+    const { data } = await supabase
+      .from('shopping_logs')
+      .insert({
+        household_id: household!.id,
+        user_id: userId,
+        action,
+        points,
+        log_date: format(new Date(), 'yyyy-MM-dd'),
+      })
+      .select('user_id, points, log_date')
+      .single()
+    if (data) setShoppingLogs(prev => [...prev, data as ShoppingLog])
   }
 
   async function addItem() {
     if (!title.trim() || !household) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    const actor = actorId()
+    if (!actor) return
     setAdding(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setAdding(false); return }
+
     const { data, error } = await supabase
       .from('shopping_items')
-      .insert({ household_id: household.id, created_by: user.id, title: title.trim(), category })
+      .insert({ household_id: household.id, created_by: actor, title: title.trim(), category })
       .select().single()
     if (!error && data) {
       setItems(prev => [data as ShoppingItem, ...prev])
       setTitle('')
+      await writeLog('added', actor)
     }
     setAdding(false)
   }
 
   async function toggleItem(item: ShoppingItem) {
+    const actor = actorId()
     const { data: { user } } = await supabase.auth.getUser()
-    const updates = item.checked
+    const userId = actor ?? user?.id ?? null
+    const wasChecked = item.checked
+    const updates = wasChecked
       ? { checked: false, checked_by: null, checked_at: null }
-      : { checked: true, checked_by: user?.id ?? null, checked_at: new Date().toISOString() }
+      : { checked: true, checked_by: userId, checked_at: new Date().toISOString() }
     const { data, error } = await supabase
       .from('shopping_items').update(updates).eq('id', item.id).select().single()
     if (!error && data) {
@@ -86,6 +159,8 @@ export default function ShoppingPage() {
           return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         })
       )
+      // Only award points when checking OFF (not unchecking)
+      if (!wasChecked && userId) await writeLog('checked', userId)
     }
   }
 
@@ -99,7 +174,40 @@ export default function ShoppingPage() {
     if (!ids.length) return
     const { error } = await supabase.from('shopping_items').delete().in('id', ids)
     if (!error) setItems(prev => prev.filter(i => !i.checked))
+    // shopping_logs intentionally NOT deleted — history is preserved
   }
+
+  function memberName(userId: string) {
+    if (userId === currentUserId) return 'You'
+    const m = members.find(m => m.user_id === userId)
+    if (!m) return 'Someone'
+    return m.display_name || m.email.split('@')[0]
+  }
+
+  const leaderboard = useMemo(() => {
+    const adminId = accountType === 'family' ? currentUserId : null
+    const monthMap: Record<string, Record<string, number>> = {}
+
+    for (const log of shoppingLogs) {
+      if (adminId && log.user_id === adminId) continue
+      const month = log.log_date.slice(0, 7)
+      monthMap[month] ??= {}
+      monthMap[month][log.user_id] = (monthMap[month][log.user_id] ?? 0) + log.points
+    }
+
+    return Object.keys(monthMap).sort().reverse().slice(0, 6).map(month => {
+      const byMember = monthMap[month]
+      const sorted = Object.entries(byMember).sort((a, b) => b[1] - a[1])
+      const max = sorted[0]?.[1] ?? 1
+      return {
+        month,
+        label: format(parseISO(`${month}-01`), 'MMMM yyyy'),
+        winner: sorted[0]?.[0] ?? null,
+        max,
+        sorted,
+      }
+    })
+  }, [shoppingLogs, accountType, currentUserId])
 
   if (householdLoading) return <Spinner />
 
@@ -107,20 +215,18 @@ export default function ShoppingPage() {
   const checked   = items.filter(i => i.checked)
 
   return (
-    <div className="max-w-lg mx-auto px-4 md:px-6 py-8">
+    <div className="max-w-lg mx-auto px-4 md:px-6 py-8 space-y-8">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <ShoppingCart className="h-5 w-5 text-blue-600" />
           <h1 className="text-xl font-semibold text-gray-900">Shopping List</h1>
           {!loading && items.length > 0 && (
-            <span className="text-xs text-gray-400 font-normal">
-              {unchecked.length} left
-            </span>
+            <span className="text-xs text-gray-400 font-normal">{unchecked.length} left</span>
           )}
         </div>
-        {checked.length > 0 && (
+        {!isReadOnly && checked.length > 0 && (
           <button onClick={clearChecked} className="text-xs text-gray-400 hover:text-red-500 transition-colors">
             Clear done ({checked.length})
           </button>
@@ -128,41 +234,47 @@ export default function ShoppingPage() {
       </div>
 
       {/* Add form */}
-      <div className="mb-6 space-y-2">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Add an item…"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addItem()}
-            className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
-          />
-          <button
-            onClick={addItem}
-            disabled={!title.trim() || adding}
-            className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            <Plus className="h-4 w-4" />
-            Add
-          </button>
-        </div>
-        <div className="flex gap-1.5 flex-wrap">
-          {CATEGORIES.map(cat => (
+      {!isReadOnly && (
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Add an item…"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addItem()}
+              className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm placeholder:text-gray-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            />
             <button
-              key={cat}
-              onClick={() => setCategory(cat)}
-              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
-                category === cat
-                  ? CAT_COLORS[cat] + ' ring-2 ring-offset-1 ring-current'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}
+              onClick={addItem}
+              disabled={!title.trim() || adding}
+              className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
-              {cat}
+              <Plus className="h-4 w-4" />
+              Add
             </button>
-          ))}
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {CATEGORIES.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setCategory(cat)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all ${
+                  category === cat
+                    ? CAT_COLORS[cat] + ' ring-2 ring-offset-1 ring-current'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      <p className="text-xs text-gray-400 -mt-2">
+        +{PTS_ADD} pts for adding · +{PTS_CHECK} pts for checking off
+      </p>
 
       {/* List */}
       {loading ? (
@@ -175,37 +287,79 @@ export default function ShoppingPage() {
       ) : (
         <div className="space-y-1.5">
           {unchecked.map(item => (
-            <ItemRow key={item.id} item={item} onToggle={toggleItem} onDelete={deleteItem} />
+            <ItemRow key={item.id} item={item} onToggle={toggleItem} onDelete={deleteItem} readOnly={isReadOnly} />
           ))}
           {unchecked.length > 0 && checked.length > 0 && (
             <div className="border-t border-gray-100 pt-1" />
           )}
           {checked.map(item => (
-            <ItemRow key={item.id} item={item} onToggle={toggleItem} onDelete={deleteItem} />
+            <ItemRow key={item.id} item={item} onToggle={toggleItem} onDelete={deleteItem} readOnly={isReadOnly} />
           ))}
         </div>
+      )}
+
+      {/* Monthly Leaderboard */}
+      {leaderboard.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Trophy className="h-4 w-4 text-amber-500" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Leaderboard</h2>
+          </div>
+          <div className="space-y-3">
+            {leaderboard.map(({ month, label, winner, max, sorted }) => (
+              <div key={month} className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-700">{label}</span>
+                  {winner && (
+                    <span className="text-xs font-medium text-amber-700 bg-amber-50 border border-amber-100 px-2.5 py-0.5 rounded-full">
+                      👑 {memberName(winner)}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  {sorted.map(([userId, pts]) => (
+                    <div key={userId} className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500 w-16 truncate flex-shrink-0">
+                        {memberName(userId)}
+                      </span>
+                      <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-green-500 rounded-full transition-all"
+                          style={{ width: `${(pts / max) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-semibold text-gray-700 w-14 text-right flex-shrink-0">
+                        {pts} pts
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   )
 }
 
 function ItemRow({
-  item,
-  onToggle,
-  onDelete,
+  item, onToggle, onDelete, readOnly,
 }: {
   item: ShoppingItem
   onToggle: (item: ShoppingItem) => void
   onDelete: (id: string) => void
+  readOnly?: boolean
 }) {
   return (
     <div className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
       item.checked ? 'bg-gray-50' : 'bg-white border border-gray-100 shadow-sm'
     }`}>
       <button
-        onClick={() => onToggle(item)}
-        className={`h-5 w-5 rounded-full flex-shrink-0 border-2 flex items-center justify-center transition-colors ${
-          item.checked ? 'bg-green-500 border-green-500' : 'border-gray-300 hover:border-blue-400'
+        onClick={() => !readOnly && onToggle(item)}
+        disabled={readOnly}
+        className={`h-5 w-5 rounded-full flex-shrink-0 border-2 flex items-center justify-center transition-colors disabled:cursor-default ${
+          item.checked ? 'bg-green-500 border-green-500' : 'border-gray-300 hover:border-blue-400 disabled:hover:border-gray-300'
         }`}
       >
         {item.checked && <span className="text-white text-[10px] font-bold">✓</span>}
@@ -216,12 +370,14 @@ function ItemRow({
       <span className={`hidden sm:inline text-xs px-2 py-0.5 rounded-full font-medium ${CAT_COLORS[item.category as Category]} ${item.checked ? 'opacity-40' : ''}`}>
         {item.category}
       </span>
-      <button
-        onClick={() => onDelete(item.id)}
-        className="p-1 text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
+      {!readOnly && (
+        <button
+          onClick={() => onDelete(item.id)}
+          className="p-1 text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   )
 }
