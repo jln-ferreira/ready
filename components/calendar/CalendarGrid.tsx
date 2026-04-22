@@ -16,8 +16,53 @@ import {
   getYear,
 } from 'date-fns'
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
-import type { CalendarEvent } from '@/types/calendar'
+import type { CalendarEvent, EventRecurrence } from '@/types/calendar'
 import { CATEGORY_COLORS } from '@/types/calendar'
+
+function advanceByRecurrence(date: Date, recurrence: EventRecurrence): Date {
+  const d = new Date(date)
+  if (recurrence === 'daily') d.setDate(d.getDate() + 1)
+  else if (recurrence === 'weekly') d.setDate(d.getDate() + 7)
+  else if (recurrence === 'monthly') d.setMonth(d.getMonth() + 1)
+  return d
+}
+
+function expandRecurringEvents(events: CalendarEvent[], monthStart: Date, monthEnd: Date): CalendarEvent[] {
+  const result: CalendarEvent[] = []
+  for (const event of events) {
+    if (event.recurrence === 'none') {
+      result.push(event)
+      continue
+    }
+    const baseStart = new Date(event.start_datetime)
+    const baseEnd = new Date(event.end_datetime)
+    const duration = baseEnd.getTime() - baseStart.getTime()
+    const recurrenceEnd = event.recurrence_end
+      ? new Date(event.recurrence_end + 'T23:59:59')
+      : null
+
+    let current = new Date(baseStart)
+    // Advance to first occurrence within or after monthStart
+    let safety = 0
+    while (current < monthStart && safety < 500) {
+      safety++
+      current = advanceByRecurrence(current, event.recurrence)
+    }
+    // Emit all occurrences within [monthStart, monthEnd]
+    safety = 0
+    while (current <= monthEnd && safety < 200) {
+      safety++
+      if (recurrenceEnd && current > recurrenceEnd) break
+      result.push({
+        ...event,
+        start_datetime: new Date(current).toISOString(),
+        end_datetime: new Date(current.getTime() + duration).toISOString(),
+      })
+      current = advanceByRecurrence(current, event.recurrence)
+    }
+  }
+  return result
+}
 import { getBCHolidays } from '@/lib/bcHolidays'
 
 const WEEK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -43,15 +88,21 @@ export function CalendarGrid({ events, currentMonth, onMonthChange, onAddEvent, 
     return eachDayOfInterval({ start, end })
   }, [currentMonth])
 
+  const expandedEvents = useMemo(() => {
+    const monthStart = startOfMonth(currentMonth)
+    const monthEnd = endOfMonth(currentMonth)
+    return expandRecurringEvents(events, monthStart, monthEnd)
+  }, [events, currentMonth])
+
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>()
-    for (const event of events) {
+    for (const event of expandedEvents) {
       const key = format(new Date(event.start_datetime), 'yyyy-MM-dd')
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(event)
     }
     return map
-  }, [events])
+  }, [expandedEvents])
 
   const selectedDayEvents = selectedDay
     ? (eventsByDay.get(format(selectedDay, 'yyyy-MM-dd')) ?? [])

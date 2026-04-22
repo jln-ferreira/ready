@@ -31,6 +31,7 @@ export interface CalendarEvent {
   location: string | null
   category: EventCategory
   recurrence: EventRecurrence
+  recurrence_end: string | null
   reminder: EventReminder
   created_at: string
   updated_at: string

@@ -28,6 +28,7 @@ const blankForm = (date?: Date): EventInput => {
     location: null,
     category: 'Personal',
     recurrence: 'none',
+    recurrence_end: null,
     reminder: 'none',
   }
 }
@@ -41,6 +42,7 @@ const eventToForm = (event: CalendarEvent): EventInput => ({
   location: event.location,
   category: event.category,
   recurrence: event.recurrence,
+  recurrence_end: event.recurrence_end ?? null,
   reminder: event.reminder ?? 'none',
 })
 
@@ -87,11 +89,21 @@ export function EventModal({ mode: initialMode, event, defaultDate, onClose, onS
     onClose()
   }
 
-  const datetimeToInput = (iso: string, allDay: boolean) =>
-    allDay ? iso.slice(0, 10) : iso.slice(0, 16)
+  const datetimeToInput = (iso: string, allDay: boolean) => {
+    if (allDay) return iso.slice(0, 10)
+    const d = new Date(iso)
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    return local.toISOString().slice(0, 16)
+  }
 
-  const inputToDatetime = (val: string, allDay: boolean, isEnd: boolean) =>
-    allDay ? `${val}T${isEnd ? '23:59:59' : '00:00:00'}` : `${val}:00`
+  const inputToDatetime = (val: string, allDay: boolean, isEnd: boolean) => {
+    if (allDay) return `${val}T${isEnd ? '23:59:59' : '00:00:00'}`
+    const offset = -new Date().getTimezoneOffset()
+    const sign = offset >= 0 ? '+' : '-'
+    const h = String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0')
+    const m = String(Math.abs(offset) % 60).padStart(2, '0')
+    return `${val}:00${sign}${h}:${m}`
+  }
 
   const colors = CATEGORY_COLORS[mode === 'view' && event ? event.category : form.category]
 
@@ -157,7 +169,12 @@ export function EventModal({ mode: initialMode, event, defaultDate, onClose, onS
             {event.recurrence !== 'none' && (
               <div className="flex items-start gap-3 text-sm text-gray-700">
                 <RotateCcw className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
-                <p className="capitalize">Repeats {event.recurrence}</p>
+                <p className="capitalize">
+                  Repeats {event.recurrence}
+                  {event.recurrence_end
+                    ? ` · until ${format(new Date(event.recurrence_end + 'T00:00:00'), 'MMM d, yyyy')}`
+                    : ''}
+                </p>
               </div>
             )}
 
@@ -308,7 +325,11 @@ export function EventModal({ mode: initialMode, event, defaultDate, onClose, onS
               <label className="block text-xs font-medium text-gray-700 mb-1">Repeat</label>
               <select
                 value={form.recurrence}
-                onChange={e => set('recurrence', e.target.value as EventInput['recurrence'])}
+                onChange={e => {
+                  const val = e.target.value as EventInput['recurrence']
+                  set('recurrence', val)
+                  if (val === 'none') set('recurrence_end', null)
+                }}
                 className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
                 <option value="none">Never</option>
@@ -317,6 +338,18 @@ export function EventModal({ mode: initialMode, event, defaultDate, onClose, onS
                 <option value="monthly">Monthly</option>
               </select>
             </div>
+
+            {form.recurrence !== 'none' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Repeat until (optional)</label>
+                <input
+                  type="date"
+                  value={form.recurrence_end ?? ''}
+                  onChange={e => set('recurrence_end', e.target.value || null)}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Reminder</label>

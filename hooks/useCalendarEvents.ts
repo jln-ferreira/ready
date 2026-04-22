@@ -21,8 +21,8 @@ export function useCalendarEvents(currentMonth: Date, householdId: string | unde
       .from('calendar_events')
       .select('*')
       .eq('household_id', householdId)
-      .gte('start_datetime', start)
       .lte('start_datetime', end)
+      .or(`start_datetime.gte.${start},recurrence.neq.none`)
       .order('start_datetime')
 
     setEvents((data as CalendarEvent[]) ?? [])

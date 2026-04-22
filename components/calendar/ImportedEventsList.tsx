@@ -80,6 +80,7 @@ export function ImportedEventsList({ existingEvents, createEvent }: Props) {
       location:       event.location,
       category:       event.category,
       recurrence:     'none',
+      recurrence_end: null,
       reminder:       'none',
     }
     const { error } = await createEvent(input)
