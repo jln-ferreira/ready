@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { User, Lock, Palette, KeyRound, Bell, BellOff, Moon, Plus } from 'lucide-react'
+import { User, Lock, Palette, KeyRound, Bell, BellOff, Moon, Plus, ChevronDown } from 'lucide-react'
 import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 import { useHousehold } from '@/hooks/useHousehold'
 import { useStreakAndBadges } from '@/hooks/useStreakAndBadges'
@@ -698,32 +698,7 @@ export default function ProfilePage() {
 
       {/* Achievements — shown for individual accounts and when viewing a member */}
       {!isStreakLoading && (accountType === 'individual' || isMemberView) && (
-        <div>
-          <div className="border-t border-gray-100 pt-2 mb-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Achievements</p>
-          </div>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {badges.map(badge => (
-              <div
-                key={badge.id}
-                title={badge.desc}
-                className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-3 text-center transition-colors ${
-                  badge.earned
-                    ? 'border-amber-200 bg-amber-50'
-                    : 'border-gray-100 bg-gray-50 opacity-40'
-                }`}
-              >
-                <span className="text-2xl leading-none">{badge.emoji}</span>
-                <span className={`text-xs font-semibold leading-tight ${badge.earned ? 'text-amber-800' : 'text-gray-400'}`}>
-                  {badge.name}
-                </span>
-                <span className={`text-[10px] leading-tight ${badge.earned ? 'text-amber-600' : 'text-gray-400'}`}>
-                  {badge.desc}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <AchievementsSection badges={badges} />
       )}
 
       {/* Kids */}
@@ -796,6 +771,51 @@ export default function ProfilePage() {
       )}
       {deleteKid && (
         <DeleteKidConfirm kid={deleteKid} onDelete={handleDeleteKid} onCancel={() => setDeleteKid(null)} deleting={deletingKid} />
+      )}
+    </div>
+  )
+}
+
+function AchievementsSection({ badges }: { badges: import('@/hooks/useStreakAndBadges').BadgeResult[] }) {
+  const [open, setOpen] = useState(false)
+  const earned = badges.filter(b => b.earned).length
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="border-t border-gray-100 pt-2 mb-3 w-full flex items-center justify-between"
+      >
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          Achievements
+          {earned > 0 && (
+            <span className="ml-2 text-amber-500">{earned}/{badges.length}</span>
+          )}
+        </p>
+        <ChevronDown className={`h-3.5 w-3.5 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+          {badges.map(badge => (
+            <div
+              key={badge.id}
+              title={badge.desc}
+              className={`flex flex-col items-center gap-1 rounded-2xl border px-2 py-3 text-center transition-colors ${
+                badge.earned
+                  ? 'border-amber-200 bg-amber-50'
+                  : 'border-gray-100 bg-gray-50 opacity-40'
+              }`}
+            >
+              <span className="text-2xl leading-none">{badge.emoji}</span>
+              <span className={`text-xs font-semibold leading-tight ${badge.earned ? 'text-amber-800' : 'text-gray-400'}`}>
+                {badge.name}
+              </span>
+              <span className={`text-[10px] leading-tight ${badge.earned ? 'text-amber-600' : 'text-gray-400'}`}>
+                {badge.desc}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

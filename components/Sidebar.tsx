@@ -144,6 +144,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
     if (!pinTarget) return
     setActiveMemberId(pinTarget.user_id)
     setPinTarget(null)
+    router.push('/')
   }
 
   const toggleSection = (key: string) => {
