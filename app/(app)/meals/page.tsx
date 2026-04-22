@@ -418,17 +418,6 @@ export default function MealsPage() {
         </div>
       )}
 
-      {/* Monthly Points Chart */}
-      {mealsChart.some(m => m.bars.some(b => b.points > 0)) && (
-        <section className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <BarChart2 className="h-4 w-4 text-orange-400" />
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Points</h2>
-          </div>
-          <HouseholdMonthlyChart data={mealsChart} />
-        </section>
-      )}
-
       {/* Monthly Leaderboard */}
       {leaderboard.length > 0 && (
         <section>
@@ -468,6 +457,17 @@ export default function MealsPage() {
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* Monthly Points Chart */}
+      {mealsChart.some(m => m.bars.some(b => b.points > 0)) && (
+        <section className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <BarChart2 className="h-4 w-4 text-orange-400" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Points</h2>
+          </div>
+          <HouseholdMonthlyChart data={mealsChart} />
         </section>
       )}
     </div>

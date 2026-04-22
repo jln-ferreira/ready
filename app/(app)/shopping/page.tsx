@@ -309,17 +309,6 @@ export default function ShoppingPage() {
         </div>
       )}
 
-      {/* Monthly Points Chart */}
-      {shoppingChart.some(m => m.bars.some(b => b.points > 0)) && (
-        <section className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <BarChart2 className="h-4 w-4 text-green-500" />
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Points</h2>
-          </div>
-          <HouseholdMonthlyChart data={shoppingChart} />
-        </section>
-      )}
-
       {/* Monthly Leaderboard */}
       {leaderboard.length > 0 && (
         <section>
@@ -359,6 +348,17 @@ export default function ShoppingPage() {
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {/* Monthly Points Chart */}
+      {shoppingChart.some(m => m.bars.some(b => b.points > 0)) && (
+        <section className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <BarChart2 className="h-4 w-4 text-green-500" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Points</h2>
+          </div>
+          <HouseholdMonthlyChart data={shoppingChart} />
         </section>
       )}
     </div>
