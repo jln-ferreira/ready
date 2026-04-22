@@ -178,6 +178,7 @@ export default function ProfilePage() {
   const [sidebarColor, setSidebarColor] = useState(activeMember?.sidebar_color ?? 'blue')
   const [fitness, setFitness] = useState<FitnessProfile>(blankFitness)
 
+  const [fitnessOpen, setFitnessOpen] = useState(false)
   const [loading,   setLoading]   = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving,    setSaving]    = useState(false)
@@ -569,130 +570,140 @@ export default function ProfilePage() {
         </p>
       )}
 
-      {/* Divider */}
-      <div className="border-t border-gray-100 pt-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Fitness</p>
-      </div>
-
-      {/* Fitness fields */}
-      <div className="rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 overflow-hidden">
-        <div className="flex items-center px-4 py-3.5 gap-4">
-          <span className="text-sm text-gray-600 w-28 flex-shrink-0">Weight</span>
-          <div className="flex items-center gap-2 flex-1">
-            <input
-              type="number" min="30" max="300" step="0.1"
-              value={fitness.weight_kg ?? ''}
-              onChange={e => setFit('weight_kg', e.target.value ? parseFloat(e.target.value) : null)}
-              placeholder="70"
-              className="w-24 rounded-xl border border-gray-200 px-3 py-2 text-sm text-right tabular-nums focus:border-blue-400 focus:outline-none"
-            />
-            <span className="text-sm text-gray-400">kg</span>
-          </div>
-        </div>
-        <div className="flex items-center px-4 py-3.5 gap-4">
-          <span className="text-sm text-gray-600 w-28 flex-shrink-0">Height</span>
-          <div className="flex items-center gap-2 flex-1">
-            <input
-              type="number" min="100" max="250"
-              value={fitness.height_cm ?? ''}
-              onChange={e => setFit('height_cm', e.target.value ? parseInt(e.target.value) : null)}
-              placeholder="170"
-              className="w-24 rounded-xl border border-gray-200 px-3 py-2 text-sm text-right tabular-nums focus:border-blue-400 focus:outline-none"
-            />
-            <span className="text-sm text-gray-400">cm</span>
-          </div>
-        </div>
-        <div className="flex items-center px-4 py-3.5 gap-4">
-          <span className="text-sm text-gray-600 w-28 flex-shrink-0">Age</span>
-          <input
-            type="number" min="1" max="120"
-            value={fitness.age ?? ''}
-            onChange={e => setFit('age', e.target.value ? parseInt(e.target.value) : null)}
-            placeholder="30"
-            className="w-24 rounded-xl border border-gray-200 px-3 py-2 text-sm text-right tabular-nums focus:border-blue-400 focus:outline-none"
-          />
-        </div>
-        <div className="flex items-center px-4 py-3.5 gap-4">
-          <span className="text-sm text-gray-600 w-28 flex-shrink-0">Sex</span>
-          <div className="flex gap-2">
-            {(['male', 'female', 'other'] as Sex[]).map(s => (
-              <button
-                key={s}
-                onClick={() => setFit('sex', s)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
-                  fitness.sex === s ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Activity Level */}
+      {/* Fitness — collapsible */}
       <div>
-        <p className="text-sm font-medium text-gray-700 mb-2">Activity Level</p>
-        <div className="space-y-2">
-          {(Object.keys(ACTIVITY_LABELS) as ActivityLevel[]).map(level => (
-            <button
-              key={level}
-              onClick={() => setFit('activity_level', level)}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-colors ${
-                fitness.activity_level === level
-                  ? 'border-blue-300 bg-blue-50'
-                  : 'border-gray-200 bg-white hover:bg-gray-50'
-              }`}
-            >
-              <div>
-                <p className={`text-sm font-medium ${fitness.activity_level === level ? 'text-blue-700' : 'text-gray-800'}`}>
-                  {ACTIVITY_LABELS[level].label}
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">{ACTIVITY_LABELS[level].desc}</p>
+        <button
+          onClick={() => setFitnessOpen(o => !o)}
+          className="border-t border-gray-100 pt-2 w-full flex items-center justify-between"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Fitness</p>
+          <ChevronDown className={`h-3.5 w-3.5 text-gray-400 transition-transform ${fitnessOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {fitnessOpen && (
+          <div className="mt-4 space-y-4">
+            {/* Fitness fields */}
+            <div className="rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 overflow-hidden">
+              <div className="flex items-center px-4 py-3.5 gap-4">
+                <span className="text-sm text-gray-600 w-28 flex-shrink-0">Weight</span>
+                <div className="flex items-center gap-2 flex-1">
+                  <input
+                    type="number" min="30" max="300" step="0.1"
+                    value={fitness.weight_kg ?? ''}
+                    onChange={e => setFit('weight_kg', e.target.value ? parseFloat(e.target.value) : null)}
+                    placeholder="70"
+                    className="w-24 rounded-xl border border-gray-200 px-3 py-2 text-sm text-right tabular-nums focus:border-blue-400 focus:outline-none"
+                  />
+                  <span className="text-sm text-gray-400">kg</span>
+                </div>
               </div>
-              {fitness.activity_level === level && (
-                <span className="text-blue-600 text-sm font-bold">✓</span>
+              <div className="flex items-center px-4 py-3.5 gap-4">
+                <span className="text-sm text-gray-600 w-28 flex-shrink-0">Height</span>
+                <div className="flex items-center gap-2 flex-1">
+                  <input
+                    type="number" min="100" max="250"
+                    value={fitness.height_cm ?? ''}
+                    onChange={e => setFit('height_cm', e.target.value ? parseInt(e.target.value) : null)}
+                    placeholder="170"
+                    className="w-24 rounded-xl border border-gray-200 px-3 py-2 text-sm text-right tabular-nums focus:border-blue-400 focus:outline-none"
+                  />
+                  <span className="text-sm text-gray-400">cm</span>
+                </div>
+              </div>
+              <div className="flex items-center px-4 py-3.5 gap-4">
+                <span className="text-sm text-gray-600 w-28 flex-shrink-0">Age</span>
+                <input
+                  type="number" min="1" max="120"
+                  value={fitness.age ?? ''}
+                  onChange={e => setFit('age', e.target.value ? parseInt(e.target.value) : null)}
+                  placeholder="30"
+                  className="w-24 rounded-xl border border-gray-200 px-3 py-2 text-sm text-right tabular-nums focus:border-blue-400 focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center px-4 py-3.5 gap-4">
+                <span className="text-sm text-gray-600 w-28 flex-shrink-0">Sex</span>
+                <div className="flex gap-2">
+                  {(['male', 'female', 'other'] as Sex[]).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setFit('sex', s)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-colors ${
+                        fitness.sex === s ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Activity Level */}
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">Activity Level</p>
+              <div className="space-y-2">
+                {(Object.keys(ACTIVITY_LABELS) as ActivityLevel[]).map(level => (
+                  <button
+                    key={level}
+                    onClick={() => setFit('activity_level', level)}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-colors ${
+                      fitness.activity_level === level
+                        ? 'border-blue-300 bg-blue-50'
+                        : 'border-gray-200 bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    <div>
+                      <p className={`text-sm font-medium ${fitness.activity_level === level ? 'text-blue-700' : 'text-gray-800'}`}>
+                        {ACTIVITY_LABELS[level].label}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">{ACTIVITY_LABELS[level].desc}</p>
+                    </div>
+                    {fitness.activity_level === level && (
+                      <span className="text-blue-600 text-sm font-bold">✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Water goal */}
+            <div className="rounded-2xl bg-blue-50 border border-blue-100 px-4 py-4">
+              <p className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">
+                Your calculated daily water goal
+              </p>
+              <p className="text-2xl font-bold text-blue-700">{waterGoal.toLocaleString()} ml</p>
+              <p className="text-xs text-blue-400 mt-0.5">
+                {(waterGoal / 250).toFixed(0)} glasses of 250ml
+                {fitness.weight_kg
+                  ? ` · based on ${fitness.weight_kg}kg · ${ACTIVITY_LABELS[fitness.activity_level].label.toLowerCase()} activity`
+                  : ' · update your weight for a precise goal'}
+              </p>
+            </div>
+
+            {/* TDEE */}
+            <div className="rounded-2xl bg-orange-50 border border-orange-100 px-4 py-4">
+              <p className="text-xs font-semibold text-orange-500 uppercase tracking-wide mb-1">
+                Average daily calories burned (TDEE)
+              </p>
+              {tdee ? (
+                <>
+                  <p className="text-2xl font-bold text-orange-700">{tdee.toLocaleString()} kcal</p>
+                  <p className="text-xs text-orange-400 mt-0.5">
+                    BMR at rest: {bmr?.toLocaleString()} kcal · {ACTIVITY_LABELS[fitness.activity_level].label.toLowerCase()} activity ×{TDEE_MULTIPLIERS[fitness.activity_level]}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-orange-300">— kcal</p>
+                  <p className="text-xs text-orange-400 mt-0.5">
+                    {fitness.sex === 'other'
+                      ? 'TDEE calculation uses biological sex — select male or female for a precise estimate'
+                      : 'Fill in weight, height, age, and sex for a precise estimate'}
+                  </p>
+                </>
               )}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Water goal */}
-      <div className="rounded-2xl bg-blue-50 border border-blue-100 px-4 py-4">
-        <p className="text-xs font-semibold text-blue-500 uppercase tracking-wide mb-1">
-          Your calculated daily water goal
-        </p>
-        <p className="text-2xl font-bold text-blue-700">{waterGoal.toLocaleString()} ml</p>
-        <p className="text-xs text-blue-400 mt-0.5">
-          {(waterGoal / 250).toFixed(0)} glasses of 250ml
-          {fitness.weight_kg
-            ? ` · based on ${fitness.weight_kg}kg · ${ACTIVITY_LABELS[fitness.activity_level].label.toLowerCase()} activity`
-            : ' · update your weight for a precise goal'}
-        </p>
-      </div>
-
-      {/* TDEE */}
-      <div className="rounded-2xl bg-orange-50 border border-orange-100 px-4 py-4">
-        <p className="text-xs font-semibold text-orange-500 uppercase tracking-wide mb-1">
-          Average daily calories burned (TDEE)
-        </p>
-        {tdee ? (
-          <>
-            <p className="text-2xl font-bold text-orange-700">{tdee.toLocaleString()} kcal</p>
-            <p className="text-xs text-orange-400 mt-0.5">
-              BMR at rest: {bmr?.toLocaleString()} kcal · {ACTIVITY_LABELS[fitness.activity_level].label.toLowerCase()} activity ×{TDEE_MULTIPLIERS[fitness.activity_level]}
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-2xl font-bold text-orange-300">— kcal</p>
-            <p className="text-xs text-orange-400 mt-0.5">
-              {fitness.sex === 'other'
-                ? 'TDEE calculation uses biological sex — select male or female for a precise estimate'
-                : 'Fill in weight, height, age, and sex for a precise estimate'}
-            </p>
-          </>
+            </div>
+          </div>
         )}
       </div>
 
