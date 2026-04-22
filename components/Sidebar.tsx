@@ -140,8 +140,15 @@ export default function Sidebar({ onClose }: SidebarProps) {
     return data === true
   }, [pinTarget, supabase])
 
-  const onPinSuccess = () => {
+  const onPinSuccess = async () => {
     if (!pinTarget) return
+    // Record activity before navigating so the streak fetch on the profile page
+    // always sees today's row — avoids a race where streak shows 0 on first PIN entry.
+    await fetch('/api/member/activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: pinTarget.user_id }),
+    }).catch(() => {})
     setActiveMemberId(pinTarget.user_id)
     setPinTarget(null)
     router.push('/')
