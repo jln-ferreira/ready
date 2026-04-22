@@ -256,11 +256,7 @@ export function useStreakAndBadges(
             .select('*')
             .eq('done_by', userId)
             .gte('done_date', since),
-          supabase.from('water_logs')
-            .select('user_id, log_date, amount_ml')
-            .eq('household_id', householdId)
-            .gte('log_date', since)
-            .gt('amount_ml', 0),
+          Promise.resolve({ data: null }), // reserved: household water logs
           supabase.from('user_activity')
             .select('activity_date')
             .eq('user_id', userId)
