@@ -54,23 +54,39 @@ export interface StreakAndBadges {
 // ─── badge definitions ────────────────────────────────────────────────────────
 
 export const BADGE_DEFS = [
+  // Chore milestones
   { id: 'first_chore',    emoji: '✅', name: 'First Step',       desc: 'Close your first chore' },
   { id: 'chore_10',       emoji: '⚡', name: 'On a Roll',         desc: '10 chores closed' },
   { id: 'chore_50',       emoji: '🏆', name: 'Chore Master',      desc: '50 chores closed' },
   { id: 'chore_100',      emoji: '🎯', name: 'Centurion',         desc: '100 chores closed' },
-  { id: 'points_100',     emoji: '💯', name: 'Century Club',      desc: 'Earn 100 total points' },
-  { id: 'points_250',     emoji: '💰', name: 'Point Hunter',      desc: 'Earn 250 total points' },
-  { id: 'points_500',     emoji: '🚀', name: 'High Scorer',       desc: 'Earn 500 total points' },
-  { id: 'points_1000',    emoji: '💎', name: 'Diamond',           desc: 'Earn 1,000 total points' },
+  // Chore points
+  { id: 'points_100',     emoji: '💯', name: 'Century Club',      desc: 'Earn 100 chore points' },
+  { id: 'points_250',     emoji: '💰', name: 'Point Hunter',      desc: 'Earn 250 chore points' },
+  { id: 'points_500',     emoji: '🚀', name: 'High Scorer',       desc: 'Earn 500 chore points' },
+  { id: 'points_1000',    emoji: '💎', name: 'Diamond',           desc: 'Earn 1,000 chore points' },
+  // Meal milestones
+  { id: 'meals_first',    emoji: '🍽️', name: 'Meal Planner',      desc: 'Plan your first meal' },
+  { id: 'meals_pts_50',   emoji: '🥗', name: 'Sous Chef',         desc: 'Earn 50 meal points' },
+  { id: 'meals_pts_150',  emoji: '👨‍🍳', name: 'Head Chef',         desc: 'Earn 150 meal points' },
+  { id: 'meals_pts_400',  emoji: '⭐', name: 'Michelin Star',     desc: 'Earn 400 meal points' },
+  // Shopping milestones
+  { id: 'shop_first',     emoji: '🛒', name: 'First Shop',        desc: 'Add your first shopping item' },
+  { id: 'shop_pts_50',    emoji: '🧺', name: 'Bargain Hunter',    desc: 'Earn 50 shopping points' },
+  { id: 'shop_pts_150',   emoji: '🛍️', name: 'Super Shopper',     desc: 'Earn 150 shopping points' },
+  { id: 'shop_pts_400',   emoji: '🏪', name: 'Market Pro',        desc: 'Earn 400 shopping points' },
+  // Streaks
   { id: 'streak_3',       emoji: '🔥', name: 'Streak Starter',   desc: '3-day activity streak' },
   { id: 'streak_7',       emoji: '🌟', name: 'On Fire',           desc: '7-day activity streak' },
   { id: 'streak_14',      emoji: '💫', name: 'Fortnight',         desc: '14-day activity streak' },
   { id: 'streak_30',      emoji: '⚡', name: 'Unstoppable',       desc: '30-day activity streak' },
+  // Hydration
   { id: 'hydration_7',    emoji: '💧', name: 'Hydration Hero',    desc: 'Log water 7 days in a row' },
   { id: 'hydration_14',   emoji: '💦', name: 'Hydration Pro',     desc: 'Log water 14 days in a row' },
   { id: 'water_30',       emoji: '🌊', name: 'Water Warrior',     desc: 'Log water 30 total days' },
+  // Leaderboard
   { id: 'month_winner',   emoji: '👑', name: 'Month Winner',      desc: 'Win a monthly chore leaderboard' },
   { id: 'hat_trick',      emoji: '🎩', name: 'Hat Trick',         desc: 'Win the monthly leaderboard 3 times' },
+  // Chore variety
   { id: 'clean_sweep',    emoji: '🧹', name: 'Clean Sweep',       desc: 'Close 5 chores in one day' },
   { id: 'clean_sweep_3',  emoji: '✨', name: 'Spotless',          desc: 'Clean sweep on 3 different days' },
   { id: 'weekend_warrior',emoji: '🏄', name: 'Weekend Warrior',   desc: 'Complete chores on a Saturday and a Sunday' },
@@ -91,7 +107,6 @@ function computeStreaks(dates: string[]): { current: number; longest: number } {
   const today     = format(new Date(), 'yyyy-MM-dd')
   const yesterday = format(subDays(new Date(), 1), 'yyyy-MM-dd')
 
-  // Current streak — must include today or yesterday to be active
   let current = 0
   if (unique[0] === today || unique[0] === yesterday) {
     current = 1
@@ -101,7 +116,6 @@ function computeStreaks(dates: string[]): { current: number; longest: number } {
     }
   }
 
-  // All-time longest streak
   let longest = unique.length > 0 ? 1 : 0
   let run = 1
   for (let i = 1; i < unique.length; i++) {
@@ -122,34 +136,33 @@ function computeBadges(
   waterLogs: WaterLog[],
   allHouseholdLogs: ChoreLog[],
   activityDates: string[],
+  mealCount: number,
+  mealPoints: number,
+  shoppingAdded: number,
+  shoppingPoints: number,
 ): BadgeResult[] {
   const totalChores = myLogs.length
   const totalPoints = myLogs.reduce((s, l) => s + (l.points_earned ?? 0), 0)
   const { current, longest } = computeStreaks(activityDates)
   const peakStreak = Math.max(current, longest)
 
-  // Water streak
   const waterActiveDates = waterLogs.filter(l => l.amount_ml > 0).map(l => l.log_date)
   const { current: wCur, longest: wLong } = computeStreaks(waterActiveDates)
   const peakWater = Math.max(wCur, wLong)
   const totalWaterDays = waterActiveDates.length
 
-  // Clean sweep: 5+ chores in a single day
   const byDate: Record<string, number> = {}
   for (const l of myLogs) byDate[l.done_date] = (byDate[l.done_date] ?? 0) + 1
-  const cleanSweep = Object.values(byDate).some(n => n >= 5)
+  const cleanSweep  = Object.values(byDate).some(n => n >= 5)
   const cleanSweep3 = Object.values(byDate).filter(n => n >= 5).length >= 3
 
-  // Weekend warrior: completed chores on at least one Saturday AND one Sunday
-  const hasSaturday = myLogs.some(l => parseISO(l.done_date).getDay() === 6)
-  const hasSunday   = myLogs.some(l => parseISO(l.done_date).getDay() === 0)
+  const hasSaturday    = myLogs.some(l => parseISO(l.done_date).getDay() === 6)
+  const hasSunday      = myLogs.some(l => parseISO(l.done_date).getDay() === 0)
   const weekendWarrior = hasSaturday && hasSunday
 
-  // Variety: completed 5+ distinct chore types
   const uniqueChores = new Set(myLogs.map(l => l.chore_id).filter(Boolean))
   const variety5 = uniqueChores.size >= 5
 
-  // Month winner / hat trick: count months where user had most points vs 1+ other member
   const monthMap: Record<string, Record<string, number>> = {}
   for (const l of allHouseholdLogs) {
     const m = l.done_date.slice(0, 7)
@@ -176,6 +189,14 @@ function computeBadges(
       case 'points_250':      earned = totalPoints >= 250; break
       case 'points_500':      earned = totalPoints >= 500; break
       case 'points_1000':     earned = totalPoints >= 1000; break
+      case 'meals_first':     earned = mealCount >= 1; break
+      case 'meals_pts_50':    earned = mealPoints >= 50; break
+      case 'meals_pts_150':   earned = mealPoints >= 150; break
+      case 'meals_pts_400':   earned = mealPoints >= 400; break
+      case 'shop_first':      earned = shoppingAdded >= 1; break
+      case 'shop_pts_50':     earned = shoppingPoints >= 50; break
+      case 'shop_pts_150':    earned = shoppingPoints >= 150; break
+      case 'shop_pts_400':    earned = shoppingPoints >= 400; break
       case 'streak_3':        earned = peakStreak >= 3; break
       case 'streak_7':        earned = peakStreak >= 7; break
       case 'streak_14':       earned = peakStreak >= 14; break
@@ -226,9 +247,7 @@ export function useStreakAndBadges(
       try {
         const since = format(subMonths(new Date(), 60), 'yyyy-MM-dd')
 
-        // Use select('*') so queries don't fail if optional columns (points_earned) don't exist yet.
-        // myLogs is derived client-side from allChoresRes to avoid RLS issues with done_by-only queries.
-        const [myWaterRes, allChoresRes, allWaterRes, myActivityRes, allActivityRes] = await Promise.all([
+        const [myWaterRes, allChoresRes, allWaterRes, myActivityRes, allActivityRes, mealLogsRes, shoppingLogsRes] = await Promise.all([
           supabase.from('water_logs')
             .select('log_date, amount_ml')
             .eq('user_id', userId)
@@ -237,24 +256,28 @@ export function useStreakAndBadges(
             .select('*')
             .eq('done_by', userId)
             .gte('done_date', since),
-          // Water logs for all household members — same source as personal streak
           supabase.from('water_logs')
             .select('user_id, log_date, amount_ml')
             .eq('household_id', householdId)
             .gte('log_date', since)
             .gt('amount_ml', 0),
-          // Login-based activity for personal streak
           supabase.from('user_activity')
             .select('activity_date')
             .eq('user_id', userId)
             .gte('activity_date', since),
-          // Login-based activity for all household members
           supabase.from('user_activity')
             .select('user_id, activity_date')
             .gte('activity_date', since),
+          supabase.from('meal_logs')
+            .select('points')
+            .eq('user_id', userId)
+            .gte('plan_date', since),
+          supabase.from('shopping_logs')
+            .select('points, action')
+            .eq('user_id', userId)
+            .gte('log_date', since),
         ])
 
-        // Members: try with profiles first, fall back to basic
         let members: MemberProfile[] = []
         const { data: profileData, error: profileErr } = await supabase.rpc('get_household_members_with_profiles')
         if (!profileErr && profileData) {
@@ -267,31 +290,33 @@ export function useStreakAndBadges(
         if (cancelled) return
 
         if (allChoresRes.error) console.error('[useStreakAndBadges] chore_logs error:', allChoresRes.error)
-        console.log('[useStreakAndBadges] chore_logs rows:', allChoresRes.data?.length, 'userId:', userId)
 
-        const allLogs    = (allChoresRes.data ?? []) as ChoreLog[]
-        const myLogs     = allLogs.filter(l => l.done_by === userId)
-        const waterLogs  = (myWaterRes.data ?? []) as WaterLog[]
-        const allWater   = (allWaterRes.data ?? []) as { user_id: string; log_date: string; amount_ml: number }[]
+        const allLogs   = (allChoresRes.data ?? []) as ChoreLog[]
+        const myLogs    = allLogs.filter(l => l.done_by === userId)
+        const waterLogs = (myWaterRes.data ?? []) as WaterLog[]
 
-        // Login streak = only user_activity (opening the app)
-        const loginDates    = (myActivityRes.data ?? []).map((r: { activity_date: string }) => r.activity_date)
+        const loginDates = (myActivityRes.data ?? []).map((r: { activity_date: string }) => r.activity_date)
         const { current, longest } = computeStreaks(loginDates)
 
-        // Badges still use all activity sources for fair computation
-        const choreDates    = myLogs.map(l => l.done_date)
-        const waterDates    = waterLogs.filter(l => l.amount_ml > 0).map(l => l.log_date)
-        const allActivity   = [...new Set([...loginDates, ...choreDates, ...waterDates])]
-        const badges = computeBadges(userId, myLogs, waterLogs, allLogs, allActivity)
+        const choreDates  = myLogs.map(l => l.done_date)
+        const waterDates  = waterLogs.filter(l => l.amount_ml > 0).map(l => l.log_date)
+        const allActivity = [...new Set([...loginDates, ...choreDates, ...waterDates])]
 
-        // Household comparison = login streak only (user_activity), excluding self
+        const mealLogsData    = (mealLogsRes.data ?? []) as { points: number }[]
+        const shoppingLogsData = (shoppingLogsRes.data ?? []) as { points: number; action: string }[]
+        const mealCount       = mealLogsData.length
+        const mealPoints      = mealLogsData.reduce((s, l) => s + (l.points ?? 0), 0)
+        const shoppingAdded   = shoppingLogsData.filter(l => l.action === 'added').length
+        const shoppingPoints  = shoppingLogsData.reduce((s, l) => s + (l.points ?? 0), 0)
+
+        const badges = computeBadges(userId, myLogs, waterLogs, allLogs, allActivity, mealCount, mealPoints, shoppingAdded, shoppingPoints)
+
         const memberLoginDates: Record<string, string[]> = {}
         for (const row of (allActivityRes.data ?? []) as { user_id: string; activity_date: string }[]) {
           if (!memberLoginDates[row.user_id]) memberLoginDates[row.user_id] = []
           memberLoginDates[row.user_id].push(row.activity_date)
         }
 
-        // Deduplicate and exclude family admin accounts from the competition
         const seen = new Set<string>()
         const uniqueMembers = members.filter(m => {
           if (seen.has(m.user_id)) return false
@@ -301,7 +326,6 @@ export function useStreakAndBadges(
           return true
         })
 
-        // Show only other members (not self) — user already sees their own at the top
         const householdStreaks: HouseholdStreak[] = uniqueMembers
           .filter(m => m.user_id !== userId)
           .map(m => {
