@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
 import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 import { Utensils, ChevronLeft, ChevronRight, X, Trophy, ChevronDown, BarChart2 } from 'lucide-react'
-import MonthlyPointsChart, { buildMonthlyPoints } from '@/components/MonthlyPointsChart'
+import HouseholdMonthlyChart, { buildHouseholdMonthlyPoints } from '@/components/HouseholdMonthlyChart'
 
 type MealType = 'breakfast' | 'lunch' | 'dinner'
 
@@ -41,6 +41,7 @@ interface MemberProfile {
   user_id: string
   email: string
   display_name?: string
+  sidebar_color?: string
 }
 
 const PTS_PLAN = 8
@@ -226,14 +227,14 @@ export default function MealsPage() {
     return m ? (m.display_name || m.email.split('@')[0]) : 'Someone'
   }
 
-  const myMealsChart = useMemo(() => {
-    const actor = actorId()
-    if (!actor) return []
-    return buildMonthlyPoints(
-      mealLogs.filter(l => l.user_id === actor)
-              .map(l => ({ date: l.plan_date, points: l.points }))
+  const mealsChart = useMemo(() => {
+    const adminId = accountType === 'family' ? currentUserId : null
+    return buildHouseholdMonthlyPoints(
+      mealLogs.map(l => ({ date: l.plan_date, userId: l.user_id, points: l.points })),
+      members.map(m => ({ userId: m.user_id, name: memberName(m.user_id), sidebar_color: m.sidebar_color })),
+      adminId,
     )
-  }, [mealLogs, effectiveUserId, currentUserId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mealLogs, members, accountType, currentUserId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const leaderboard = useMemo(() => {
     const adminId = accountType === 'family' ? currentUserId : null
@@ -417,14 +418,14 @@ export default function MealsPage() {
         </div>
       )}
 
-      {/* My Monthly Points */}
-      {myMealsChart.some(d => d.points > 0) && (
+      {/* Monthly Points Chart */}
+      {mealsChart.some(m => m.bars.some(b => b.points > 0)) && (
         <section className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
           <div className="flex items-center gap-2">
             <BarChart2 className="h-4 w-4 text-orange-400" />
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">My Monthly Points</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Points</h2>
           </div>
-          <MonthlyPointsChart data={myMealsChart} color="#f97316" />
+          <HouseholdMonthlyChart data={mealsChart} />
         </section>
       )}
 

@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useHousehold } from '@/hooks/useHousehold'
 import { useActiveMembers } from '@/contexts/ActiveMemberContext'
 import { ShoppingCart, Plus, Trash2, Trophy, BarChart2 } from 'lucide-react'
-import MonthlyPointsChart, { buildMonthlyPoints } from '@/components/MonthlyPointsChart'
+import HouseholdMonthlyChart, { buildHouseholdMonthlyPoints } from '@/components/HouseholdMonthlyChart'
 
 const CATEGORIES = ['Produce', 'Dairy', 'Meat', 'Bakery', 'Pantry', 'Other'] as const
 type Category = typeof CATEGORIES[number]
@@ -42,6 +42,7 @@ interface MemberProfile {
   user_id: string
   email: string
   display_name?: string
+  sidebar_color?: string
 }
 
 const PTS_ADD   = 3   // adding an item
@@ -185,14 +186,14 @@ export default function ShoppingPage() {
     return m.display_name || m.email.split('@')[0]
   }
 
-  const myShoppingChart = useMemo(() => {
-    const actor = effectiveUserId ?? currentUserId
-    if (!actor) return []
-    return buildMonthlyPoints(
-      shoppingLogs.filter(l => l.user_id === actor)
-                  .map(l => ({ date: l.log_date, points: l.points }))
+  const shoppingChart = useMemo(() => {
+    const adminId = accountType === 'family' ? currentUserId : null
+    return buildHouseholdMonthlyPoints(
+      shoppingLogs.map(l => ({ date: l.log_date, userId: l.user_id, points: l.points })),
+      members.map(m => ({ userId: m.user_id, name: memberName(m.user_id), sidebar_color: m.sidebar_color })),
+      adminId,
     )
-  }, [shoppingLogs, effectiveUserId, currentUserId])
+  }, [shoppingLogs, members, accountType, currentUserId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const leaderboard = useMemo(() => {
     const adminId = accountType === 'family' ? currentUserId : null
@@ -308,14 +309,14 @@ export default function ShoppingPage() {
         </div>
       )}
 
-      {/* My Monthly Points */}
-      {myShoppingChart.some(d => d.points > 0) && (
+      {/* Monthly Points Chart */}
+      {shoppingChart.some(m => m.bars.some(b => b.points > 0)) && (
         <section className="rounded-2xl border border-gray-100 bg-white p-4 space-y-3">
           <div className="flex items-center gap-2">
             <BarChart2 className="h-4 w-4 text-green-500" />
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">My Monthly Points</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Monthly Points</h2>
           </div>
-          <MonthlyPointsChart data={myShoppingChart} color="#22c55e" />
+          <HouseholdMonthlyChart data={shoppingChart} />
         </section>
       )}
 
